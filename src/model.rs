@@ -157,9 +157,12 @@ pub struct RawUser {
     pub frontends: HashMap<String, RawFrontendCred>,
 }
 
-/// One front-end protocol credential. Different protocols use different subsets:
-/// TUIC uses `uuid` + `password`; a uuid-only protocol (e.g. VLESS) would set
-/// just `uuid`; a password-only protocol (e.g. Trojan) just `password`.
+/// One front-end protocol credential, namespaced per listener adapter so that
+/// adding an adapter never widens an existing adapter's credential scope.
+/// Different adapters use different subsets: TUIC uses `uuid` + `password`; a
+/// token-style adapter may set only `uuid`; a secret-only adapter only
+/// `password`. A new adapter must justify itself by an application-ingress
+/// requirement and ship its own fail-closed auth path.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct RawFrontendCred {
     #[serde(default)]

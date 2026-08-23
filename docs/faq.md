@@ -15,9 +15,11 @@
 不是必须。节点启动时先读本地缓存 `cache_path`，只要缓存里有用户就能工作。快速试用可以直接手写一份
 `snapshot.json`（见 [快速开始](./quickstart.md)）。但生产环境推荐用控制面统一下发。
 
-**支持哪些协议？**
-入口：HTTP CONNECT、SOCKS5，各自可叠加 TLS（`https` / `socks5tls`）。出口：直连、HTTP 上游、SOCKS5 上游、
-反向 hop（QUIC）。普通 HTTP（非 CONNECT）正向转发暂未支持，见 [Roadmap](./roadmap.md)。
+**支持哪些接入方式和出口？**
+应用接入（listener adapter）：HTTP CONNECT 隧道、明文 HTTP absolute-form 转发、SOCKS5（含 UDP），
+各自可叠加 TLS（`https` / `socks5tls`）；另有独立的 TUIC v5（QUIC）前端。
+出口（egress）：直连、HTTP 上游、SOCKS5 上游、反向 hop（QUIC）、Subnetra 加密 L3 组网，
+以及按优先级故障转移的 egress chain。
 
 ---
 

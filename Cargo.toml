@@ -3,14 +3,14 @@ name = "rove-proxy"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.88"
-description = "Rove is an application-network optimizer: a single-binary forward proxy for Agent APIs, trading, and other latency-sensitive app paths"
+description = "Rove is an application-network optimizer: a single-binary application egress plane with identity, routing, QoS and audit for Agent APIs, trading, and other latency-sensitive app paths"
 license = "MIT"
 repository = "https://github.com/talkincode/rove"
 homepage = "https://github.com/talkincode/rove"
 documentation = "https://rove.talkincode.net/"
 readme = "README.md"
 authors = ["talkincode"]
-keywords = ["proxy", "socks5", "network", "edge"]
+keywords = ["egress", "application-network", "routing", "gateway", "proxy"]
 categories = ["network-programming", "command-line-utilities"]
 
 [lib]
