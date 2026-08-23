@@ -19,6 +19,11 @@
 
 ### Changed
 
+- 文档站点首页（`docs/introduction.md`）补齐与 README 一致的产品叙事：主干写成
+  `identity → policy → route → egress → transport → observability`，HTTP/SOCKS5/TUIC
+  降为 listener adapter，并在站点内公开「使用边界」。FAQ 同步修正 hop 凭据说明——
+  配置了入口监听时凭据必填，不再写「回退到默认 `rove`/`rove`」。
+
 - **破坏性**：`addrbook/book.toml` 的收录范围收敛为基础设施与企业应用数据。移除
   `geosite/cn`（geolocation-cn）、`geosite/category-ai-!cn`、`geosite/category-netdisk-!cn`
   以及流媒体、社交、`telegram-ip` 等分类——这些数据集以「哪些站点需要特殊访问」为组织方式，

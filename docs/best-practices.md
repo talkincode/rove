@@ -7,7 +7,7 @@
 
 ## 场景一：单节点纯直连（最简单）
 
-**适用**：只想要一个带用户认证 + 访问日志的正向代理出口，不需要分流。
+**适用**：只想要一个带用户认证 + 访问日志的应用出口，不需要分流。
 
 ```text
 client ──► rove (认证 + 直连) ──► 目标
@@ -293,7 +293,7 @@ flowchart LR
 
 ## 场景九：多节点统一发布 rove-addrbook
 
-**适用**：大量云厂商 IP 段、社区域名表或自有分类需要被多个 edge 的 route `selectors` 复用。
+**适用**：大量云厂商 IP 段、企业应用域名或自有分类需要被多个 edge 的 route `selectors` 复用。
 
 ```text
 可信源 ─► rove-abctl fetch/build/verify/diff ─► 制品仓库 ─► 各节点本地 book.rab

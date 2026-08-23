@@ -1,6 +1,6 @@
 # 快速开始
 
-本章用最短路径把一个能用的代理跑起来，并用 `curl` 验证。全程不需要控制面 —— 我们先用一份**本地快照缓存**
+本章用最短路径把一个能用的出口节点跑起来，并用 `curl` 验证。全程不需要控制面 —— 我们先用一份**本地快照缓存**
 喂给节点，让它离线也能鉴权和转发。
 
 > 需要 Rust 1.88+（源码构建）或 Docker。想要预编译二进制见 [安装与部署](./installation.md)。
@@ -96,7 +96,7 @@ curl -x socks5h://alice:s3cret@127.0.0.1:1080 https://www.example.com -I
 ## 下一步
 
 - 接上你自己的控制面，让用户和策略自动下发 → [控制面同步协议](./snapshot-protocol.md)
-- 加 HTTPS / SOCKS5-over-TLS 入口、限速、分流到二级代理 → [配置详解](./configuration.md) · [数据模型](./data-model.md)
-- 用 AWS/Azure/GCP、v2fly 或自有列表维护大型分流规则 → [rove-addrbook 指南](./addrbook-format.md)
-- 部署到生产（systemd / Docker / 反代） → [安装与部署](./installation.md)
+- 加 HTTPS / SOCKS5-over-TLS 入口、限速、按规则选出口 → [配置详解](./configuration.md) · [数据模型](./data-model.md)
+- 用 AWS/Azure/GCP 官方地址段或自有列表维护大型分流规则 → [rove-addrbook 指南](./addrbook-format.md)
+- 部署到生产（systemd / Docker） → [安装与部署](./installation.md)
 - 看典型拓扑怎么搭 → [最佳实践场景](./best-practices.md)

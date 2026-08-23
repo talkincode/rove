@@ -82,7 +82,7 @@ grace_period_secs = 30
 可配置任意多个。`protocol` 决定协议，是否存在 `[listeners.tls]` 决定是否升级为 TLS 变体。`socks5` 入口支持 UDP ASSOCIATE（UDP 出口经反向 hop，见 [客户端接入 · SOCKS5 UDP ASSOCIATE](./client-setup.md#socks5-udp-associate)）。
 
 ```toml
-# 明文 HTTP 正向代理（HTTPS 用 CONNECT；http:// 用 absolute-form）
+# 明文 HTTP 应用入口（HTTPS 用 CONNECT；http:// 用 absolute-form）
 [[listeners]]
 name = "http-in"
 protocol = "http"
