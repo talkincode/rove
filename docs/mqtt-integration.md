@@ -131,53 +131,14 @@ Rove_HOP_MQTT_PASSWORD=... rove-hop --socks5 0.0.0.0:1080 \
   "user": {
     "username": "alice",
     "expire": "2099-12-31",
-    "group": "open",
+    "policy": "shared-policy",
     "up_rate": 1024,
     "down_rate": 2048,
-    "policy": {
-      "upstream": {
-        "kind": "socks5",
-        "addr": "proxy.example.com:1080",
-        "tls": true,
-        "auth": true
-      },
-      "proxy": ["example.com"],
-      "block": ["full:blocked.example"]
-    },
-    "policies": [
-      {
-        "upstream": {
-          "kind": "socks5",
-          "addr": "proxy.example.com:1080",
-          "tls": true,
-          "auth": true
-        },
-        "proxy": ["example.com"],
-        "block": ["full:blocked.example"]
-      }
-    ]
-  },
-  "timestamp": 1781690000
-}
-```
-
-- `policy`：legacy（schema v1–v3）用户的脱敏策略对象——每个用户只归属一个 `group`，因此只有一份策略。
-- `policies`：**向后兼容字段**，把 `policy` 包成一个 0 或 1 个元素的数组，字段名对齐旧版 Rove 的 `policies: []` 契约。schema v4 用户此项为空数组，请改读 `routing_policy`。
-- 分组引用[出口链](./data-model.md#出口链chains与主备故障转移)时，`upstream` 呈现为
-  `{"kind": "chain", "addr": "<chain-id>", "tls": false, "auth": false, "members": [...]}`；
-  `members` 逐个列出成员的 `id`、`priority`、`kind`、`addr`、`tls` 与 `auth: true/false`，
-  但**永不包含**成员密码、token 或认证头。
-
-schema v4 用户增加 `routing_policy`，legacy `policy` 缺省，`policies` 为空数组：
-
-```json
-{
-  "user": {
-    "username": "alice",
-    "group": "shared-policy",
+    "max_connections": 2,
     "routing_policy": {
       "id": "shared-policy",
       "routes": [
+        {"selectors": ["book:security/blocked"], "action": "block"},
         {
           "selectors": ["openai.com"],
           "action": "egress",
@@ -191,18 +152,31 @@ schema v4 用户增加 `routing_policy`，legacy `policy` 缺省，`policies` �
             }
           }
         },
-        {"selectors": ["full:private.example"], "action": "direct"},
-        {"selectors": ["book:security/blocked"], "action": "block"}
-      ]
-    },
-    "policies": []
-  }
+        {"selectors": ["full:private.example"], "action": "direct"}
+      ],
+      "default_egress": {
+        "id": "backup",
+        "upstream": {"kind": "reverse", "addr": "tokyo-hop", "tls": false, "auth": false}
+      }
+    }
+  },
+  "timestamp": 1781690000
 }
 ```
 
-route 顺序与 snapshot 一致。`egress`/`default_egress` 展示 named egress ID 和脱敏 realization；
-chain 展示 member ID、priority、kind、addr、TLS 与 `auth` 布尔值。用户密码、TUIC 密码、
-backend 用户名/密码、token 和认证头永不返回。
+字段语义：
+
+- `policy`：该身份绑定的 routing policy **ID**（字符串）。
+- `routing_policy`：解析后的脱敏策略对象——policy ID、有序 `routes`，以及可选的
+  `default_egress`。route 顺序与快照一致，就是 first-match-wins 的求解顺序。
+- `routes[].action` 为 `"egress"` / `"direct"` / `"block"` 之一；只有 `"egress"` 会附带
+  `egress` 对象（命名 egress 的 ID 与脱敏 realization）。
+- egress 引用[出口链](./data-model.md)时，`upstream` 呈现为
+  `{"kind": "chain", "addr": "<egress-id>", "tls": false, "auth": false, "members": [...]}`；
+  `members` 逐个列出成员的 `id`、`priority`、`kind`、`addr`、`tls` 与 `auth: true/false`，
+  但**永不包含**成员密码、token 或认证头。
+- 用户密码、TUIC 密码、backend 用户名/密码、token 和认证头永不返回；`auth` 只是一个布尔标记，
+  表示该出口是否配置了认证。
 
 用户不存在：
 
@@ -248,16 +222,15 @@ Rust 版中，`syncflag` 字段仅用于兼容旧控制面消息和状态回显�
   "elapsed_ms": 123,
   "version": "Rove/0.1.0",
   "snapshot_version": 12,
-  "snapshot_schema_version": 2,
+  "snapshot_schema_version": 1,
   "timestamp": 1781690000
 }
 ```
 
-`snapshot_schema_version` 是当前生效快照声明的线协议结构/语义版本（缺省 1；
-2 表示 chain，3 表示 `book:<category>`，4 表示 routing policy + named egress）。控制面可据此确认全网节点
-均已升级后，再启用对应的
-[`kind: "chain"` 出口链引用](./snapshot-protocol.md#出口链chainsschema-v2)
-、[addrbook 规则](./addrbook-format.md)或 schema v4 producer 输出。
+`snapshot_schema_version` 是当前生效快照声明的线协议结构/语义版本，与 `snapshot_version`
+（内容修订号）相互独立。当前只有一个 schema，该字段恒为 `1`；它存在的意义是让控制面在未来
+bump schema 前，能先确认全网节点都已升级到支持新 schema 的二进制，再让 producer 输出新
+schema。快照 wire contract 见[快照协议](./snapshot-protocol.md)。
 
 同步指令有 5 秒节流窗口；窗口内重复请求状态为 `throttled`，不会并发拉取控制面。
 节点建立 MQTT 连接时还会发布 `event: "startup"`：已有快照时状态为 `synced` 且

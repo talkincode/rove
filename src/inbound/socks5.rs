@@ -611,7 +611,8 @@ async fn report_trace(ctx: &Arc<Ctx>, started: Instant, peer: SocketAddr, fields
 mod tests {
     use super::*;
     use crate::engine::Engine;
-    use crate::model::{RawGroup, RawSnapshot, RawUser, Snapshot};
+    use crate::model::test_support::PolicySpec;
+    use crate::model::{RawSnapshot, RawUser, Snapshot};
     use std::collections::HashMap;
     use tokio::io::AsyncWriteExt;
     use tokio::net::TcpListener;
@@ -905,27 +906,25 @@ mod tests {
                 up_rate: 0,
                 down_rate: 0,
                 max_connections: 0,
-                group: "open".to_string(),
+                policy: "open".to_string(),
                 frontends: Default::default(),
             },
         );
-        let mut groups = HashMap::new();
-        groups.insert(
-            "open".to_string(),
-            RawGroup {
-                upstream: None,
-                default_upstream: None,
-                proxy: Vec::new(),
-                block: Vec::new(),
-            },
-        );
+        let (routing_policies, egresses) = PolicySpec {
+            egress: None,
+            default_egress: None,
+            routed: Vec::new(),
+            blocked: Vec::new(),
+        }
+        .into_tables("open");
         let engine = Engine::new();
         engine.replace(
             Snapshot::compile(
                 RawSnapshot {
                     version: 1,
                     users,
-                    groups,
+                    routing_policies,
+                    egresses,
                     ..Default::default()
                 },
                 "node-1",
@@ -945,27 +944,25 @@ mod tests {
                 up_rate: 0,
                 down_rate: 0,
                 max_connections: 0,
-                group: "open".to_string(),
+                policy: "open".to_string(),
                 frontends: Default::default(),
             },
         );
-        let mut groups = HashMap::new();
-        groups.insert(
-            "open".to_string(),
-            RawGroup {
-                upstream: None,
-                default_upstream: None,
-                proxy: Vec::new(),
-                block: vec![blocked_host.to_string()],
-            },
-        );
+        let (routing_policies, egresses) = PolicySpec {
+            egress: None,
+            default_egress: None,
+            routed: Vec::new(),
+            blocked: vec![blocked_host.to_string()],
+        }
+        .into_tables("open");
         let engine = Engine::new();
         engine.replace(
             Snapshot::compile(
                 RawSnapshot {
                     version: 1,
                     users,
-                    groups,
+                    routing_policies,
+                    egresses,
                     ..Default::default()
                 },
                 "node-1",

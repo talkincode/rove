@@ -1,7 +1,7 @@
 {
-  "schema_version": 4,
+  "schema_version": 2,
   "version": 1,
   "egresses": {},
   "routing_policies": { "p": { "routes": [] } },
-  "users": { "u": { "password": "x", "group": "p" } }
+  "users": { "u": { "password": "x", "policy": "p" } }
 }

@@ -18,7 +18,7 @@ client ──► rove (认证 + 直连) ──► 目标
 
 ```jsonc
 {
-  "schema_version": 4,
+  "schema_version": 1,
   "version": 1,
   "users": { "alice": { "password": "s3cret", "policy": "open" } },
   "routing_policies": { "open": { "routes": [] } },
@@ -46,11 +46,11 @@ client ──► rove ┤
    rove-hop --socks5 0.0.0.0:1080 --username hop-user --password hop-pass
    ```
 
-2. 快照用 schema v4：route 选中 named egress，未命中则直连：
+2. 快照使用当前 routing policy schema：route 选中 named egress，未命中则直连：
 
    ```jsonc
    {
-     "schema_version": 4,
+     "schema_version": 1,
      "version": 2,
      "users": { "alice": { "password": "s3cret", "policy": "walled" } },
      "routing_policies": {
@@ -296,11 +296,11 @@ flowchart LR
 ```text
 可信源 ─► rove-abctl fetch/build/verify/diff ─► 制品仓库 ─► 各节点本地 book.rab
                                                      │
-控制面快照（schema v4，selectors: book:category）────┘
+控制面快照（selectors: book:category）────┘
 ```
 
 - 地址簿与快照是两条发布链：`.rab` 提供分类成员，快照决定每个 policy/route 如何使用分类。
-- 首次启用先升级节点并部署有效 `.rab`，最后才发布带 `book:` 的快照（推荐 schema v4）。
+- 首次启用先升级节点并部署有效 `.rab`，最后才发布带 `book:` selector 的快照。
 - 每次候选书先 `verify`、`inspect/query` 和 `diff --max-shrink`，再按节点/机房 canary。
 - 发布系统应核对各节点日志里的 addrbook checksum；只对比快照 `version` 不足以证明决策一致。
 - Docker 挂载地址簿目录，不挂单个文件；在同一目录原子 rename，坏书会保留旧书与旧快照。

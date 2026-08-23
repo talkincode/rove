@@ -58,17 +58,17 @@ fn spawn_node_with(test_name: &str, write_snapshot: bool, grace_period_secs: u64
         std::fs::write(
             &cache_path,
             r#"{
+  "schema_version": 1,
   "version": 1,
   "users": {
     "alice": {
       "password": "secret",
-      "group": "default"
+      "policy": "default"
     }
   },
-  "groups": {
+  "routing_policies": {
     "default": {
-      "proxy": [],
-      "block": []
+      "routes": []
     }
   }
 }"#,

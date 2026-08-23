@@ -10,11 +10,14 @@ use std::time::Duration;
 
 use rove::engine::Engine;
 use rove::inbound::{socks5, Ctx};
-use rove::model::{RawGroup, RawSnapshot, RawUpstream, RawUser, Snapshot};
+use rove::model::{RawSnapshot, RawUpstream, RawUser, Snapshot};
 use rove::reverse::edge::{DuplicatePolicy, ReverseHopManager, ReverseListenerConfig};
 use rove::reverse::hop::{ReverseEdgeConfig, ReverseHopClientConfig};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
+
+mod common;
+use common::PolicySpec;
 
 const TEST_CERT: &str = "-----BEGIN CERTIFICATE-----
 MIIDCTCCAfGgAwIBAgIUAhO4y5A+Ol+O93RC/xCs0+kTRkkwDQYJKoZIhvcNAQEL
@@ -156,23 +159,20 @@ async fn start_hop_and_wait(
 /// given reverse hop, so UDP egress goes through reverse/2.
 fn engine_via_hop(hop_id: &str) -> Arc<Engine> {
     rove::tls::init_crypto();
-    let mut groups = HashMap::new();
-    groups.insert(
-        "g".to_string(),
-        RawGroup {
-            upstream: None,
-            default_upstream: Some(RawUpstream {
-                kind: "reverse".to_string(),
-                addr: hop_id.to_string(),
-                username: None,
-                password: None,
-                tls: false,
-                skip_cert_verify: false,
-            }),
-            proxy: vec![],
-            block: vec![],
-        },
-    );
+    let (routing_policies, egresses) = PolicySpec {
+        egress: None,
+        default_egress: Some(RawUpstream {
+            kind: "reverse".to_string(),
+            addr: hop_id.to_string(),
+            username: None,
+            password: None,
+            tls: false,
+            skip_cert_verify: false,
+        }),
+        routed: vec![],
+        blocked: vec![],
+    }
+    .into_tables("g");
     let mut users = HashMap::new();
     users.insert(
         "alice".to_string(),
@@ -182,14 +182,15 @@ fn engine_via_hop(hop_id: &str) -> Arc<Engine> {
             up_rate: 0,
             down_rate: 0,
             max_connections: 0,
-            group: "g".to_string(),
+            policy: "g".to_string(),
             frontends: Default::default(),
         },
     );
     let raw = RawSnapshot {
         version: 1,
         users,
-        groups,
+        routing_policies,
+        egresses,
         ..Default::default()
     };
     let snap = Snapshot::compile(raw, "node").expect("compile");

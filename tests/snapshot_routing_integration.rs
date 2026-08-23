@@ -1,26 +1,27 @@
-//! Public integration coverage for the schema-v4 routing-policy slice.
+//! Public integration coverage for the snapshot routing contract.
 //!
 //! Everything here drives the crate through its *public* seam only —
 //! `decode_snapshot` -> `Snapshot::compile` / `compile_with_book` ->
 //! `decide` / `decide_with_sniff`, plus the credential-safe `user_policy`
 //! JSON view — exactly the surface the control plane / MQTT layer consume.
 //!
-//! Fixtures live under `tests/fixtures/snapshot_v4/`. They are deterministic
+//! Fixtures live under `tests/fixtures/snapshot/`. They are deterministic
 //! JSON documents, hand-authored to pin one behaviour each.
 //!
-//! Note on the version guard: the valid v4 fixtures deliberately omit the
-//! legacy `group` key on every user (they use `policy`). That means the same
-//! bytes would *not* decode as a historical v3 snapshot — the two shapes never
-//! silently mix. Tests below assert both directions without touching git.
+//! Rove speaks exactly one snapshot schema. Documents in any other shape —
+//! including the group-table shape used before this contract existed — are
+//! rejected whole rather than partially understood, so a control plane that
+//! speaks the wrong dialect fails closed instead of quietly installing a
+//! permissive policy.
 
 use rove::addrbook::{AddrBook, BookBuilder};
 use rove::model::{
-    decode_snapshot, schema_version_supported, Decision, RawSnapshot, Snapshot,
-    MAX_SUPPORTED_SCHEMA_VERSION,
+    decode_snapshot, schema_version_supported, Decision, Snapshot, MAX_SUPPORTED_SCHEMA_VERSION,
+    SCHEMA_VERSION,
 };
 use std::sync::Arc;
 
-const FIXTURES: &str = "tests/fixtures/snapshot_v4";
+const FIXTURES: &str = "tests/fixtures/snapshot";
 
 fn read_fixture(name: &str) -> Vec<u8> {
     let path = format!("{FIXTURES}/{name}");
@@ -49,25 +50,30 @@ fn via_addr(decision: &Decision) -> &str {
 // Version guard seam
 // ---------------------------------------------------------------------------
 
+/// The node advertises exactly one schema. The guard is what keeps a future
+/// schema bump from being silently accepted by an older binary.
 #[test]
-fn version_guard_seam_rejects_schema4_when_max_is_three() {
-    // The testable seam proves a node that still caps support at schema 3
-    // refuses a schema-4 document, while the real node (max = 4) accepts it.
-    assert!(!schema_version_supported(4, 3));
-    assert!(schema_version_supported(4, 4));
-    assert!(schema_version_supported(3, 4));
-    assert!(!schema_version_supported(5, 4));
-    // The crate constant advanced to 4 as part of this slice.
-    assert_eq!(MAX_SUPPORTED_SCHEMA_VERSION, 4);
-    assert!(schema_version_supported(4, MAX_SUPPORTED_SCHEMA_VERSION));
+fn version_guard_accepts_only_the_one_supported_schema() {
+    assert_eq!(SCHEMA_VERSION, 1);
+    assert_eq!(MAX_SUPPORTED_SCHEMA_VERSION, SCHEMA_VERSION);
+    assert!(schema_version_supported(
+        SCHEMA_VERSION,
+        MAX_SUPPORTED_SCHEMA_VERSION
+    ));
+    assert!(!schema_version_supported(
+        SCHEMA_VERSION + 1,
+        MAX_SUPPORTED_SCHEMA_VERSION
+    ));
+    // A node capped below the current schema would refuse current documents.
+    assert!(!schema_version_supported(SCHEMA_VERSION, 0));
 }
 
 #[test]
-fn local_benchmark_snapshot_uses_current_v4_routing_contract() {
+fn local_benchmark_snapshot_uses_the_current_routing_contract() {
     let bytes = std::fs::read("docker/local/snapshot.json")
         .expect("local benchmark snapshot fixture must exist");
     let doc = decode_snapshot(&bytes).expect("local benchmark snapshot must decode");
-    assert_eq!(doc.schema_version(), 4);
+    assert_eq!(doc.schema_version, SCHEMA_VERSION);
 
     let snap = Snapshot::compile(doc, "rove-local")
         .expect("local benchmark snapshot must compile for the benchmark node");
@@ -105,28 +111,25 @@ fn local_benchmark_snapshot_uses_current_v4_routing_contract() {
     ));
 }
 
+/// Identities bind to a routing policy through `policy`. The older `group`
+/// key is not an alias: a document using it is rejected outright, so a stale
+/// control plane can never land a half-understood policy on a live node.
 #[test]
-fn valid_v4_fixture_omits_legacy_group_so_v3_shape_would_reject() {
-    // The fixture bytes carry `policy`, never `group`: a v4-only shape.
-    let bytes = read_fixture("policies.json");
-    let text = String::from_utf8(bytes).unwrap();
-    assert!(text.contains("\"policy\""), "v4 users use `policy`");
+fn users_bind_by_policy_and_the_older_group_key_is_rejected() {
+    let text = String::from_utf8(read_fixture("policies.json")).unwrap();
+    assert!(text.contains("\"policy\""), "users bind by `policy`");
     assert!(
         !text.contains("\"group\""),
-        "v4 fixture must not carry the legacy `group` key"
-    );
-    // The historical decoder expected RawUser.group, so these exact bytes fail
-    // before compilation instead of silently becoming a direct legacy policy.
-    let legacy_error = serde_json::from_str::<RawSnapshot>(&text)
-        .expect_err("the historical v3 wire shape must reject a valid v4 user");
-    assert!(
-        legacy_error.to_string().contains("group"),
-        "unexpected historical-shape error: {legacy_error}"
+        "the fixture must not carry the older `group` key"
     );
 
-    // The v4 decoder and compiler accept the same bytes.
+    assert!(
+        decode_snapshot(&read_fixture("invalid/user_group.json")).is_err(),
+        "a user bound by `group` must be rejected at decode"
+    );
+
     let snap = compile_main("edge-0");
-    assert_eq!(snap.schema_version, 4);
+    assert_eq!(snap.schema_version, SCHEMA_VERSION);
 }
 
 // ---------------------------------------------------------------------------
@@ -393,7 +396,7 @@ fn book_route_without_book_fails_closed() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn user_policy_view_exposes_v4_routing_without_secrets() {
+fn user_policy_view_exposes_routing_without_secrets() {
     let snap = compile_main("edge-0");
     let view = snap.user_policy("alice").expect("alice resolves");
 
@@ -415,9 +418,8 @@ fn user_policy_view_exposes_v4_routing_without_secrets() {
     // The default egress is surfaced too.
     assert_eq!(routing.default_egress.as_ref().unwrap().id, "egress-b");
 
-    // The legacy `policy` / `policies` fields stay present (empty for v4).
-    assert!(view.policy.is_none());
-    assert!(view.policies.is_empty());
+    // The identity names the policy it is bound to.
+    assert_eq!(view.policy, "policy-main");
 
     // Serialization must never leak any credential — login, front-end, or
     // upstream/chain proxy secrets.
@@ -464,38 +466,6 @@ fn user_policy_view_for_chain_egress_lists_members_without_secrets() {
 }
 
 // ---------------------------------------------------------------------------
-// Legacy v1-v3 compatibility through the same seam
-// ---------------------------------------------------------------------------
-
-#[test]
-fn legacy_schema2_snapshot_still_decodes_compiles_and_decides() {
-    let snap = compile_fixture("legacy_v2_chain.json", "edge-0");
-    assert_eq!(snap.schema_version, 2);
-    // A proxied host resolves through the group's chain upstream.
-    match snap.decide("carol", "proxied.example.com") {
-        Decision::ViaChain(chain) => assert_eq!(chain.members.len(), 2),
-        other => panic!("expected ViaChain, got {other:?}"),
-    }
-    assert!(matches!(
-        snap.decide("carol", "blocked.example.com"),
-        Decision::Block
-    ));
-    assert!(matches!(
-        snap.decide("carol", "neutral.example.com"),
-        Decision::Direct
-    ));
-
-    // The legacy view still populates `policy`/`policies` and no `routing_policy`.
-    let view = snap.user_policy("carol").expect("carol resolves");
-    assert!(view.routing_policy.is_none());
-    let json = serde_json::to_string(&view).expect("serializes");
-    assert!(
-        !json.contains("carol-login-secret"),
-        "login secret must not leak"
-    );
-}
-
-// ---------------------------------------------------------------------------
 // Strict decode / compile rejections (mixed / unknown / dangling)
 // ---------------------------------------------------------------------------
 
@@ -508,9 +478,8 @@ fn strict_rejections_fail_closed() {
         "invalid/action_mixed.json",
         "invalid/action_unknown.json",
         "invalid/egress_both_variants.json",
-        "invalid/schema_mismatch.json",
-        "invalid/legacy_user_policy.json",
-        "invalid/legacy_node_override_egresses.json",
+        "invalid/schema_unsupported.json",
+        "invalid/historical_group_document.json",
     ] {
         assert!(
             decode_snapshot(&read_fixture(name)).is_err(),

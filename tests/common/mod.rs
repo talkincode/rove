@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 pub const TEST_CERT: &str = "-----BEGIN CERTIFICATE-----
 MIIDCTCCAfGgAwIBAgIUAhO4y5A+Ol+O93RC/xCs0+kTRkkwDQYJKoZIhvcNAQEL
 BQAwFDESMBAGA1UEAwwJbG9jYWxob3N0MB4XDTI2MDYzMDE2NTMzMloXDTI2MDcw
@@ -46,3 +48,93 @@ AulFm08vlbCzzGLQOHCbQj+kWAnL0WBQTvvDFjkCgYEA7LA+RcGSZQjXw7PYm0Z2
 4yU5RFQ1CphRafbztDMLnv5dO0gkqHWHvxE97MTBV/W9UZl6c52RB+5a8H+/QSbZ
 v6K3aPttpZErFvOSVbzWaCY=
 -----END PRIVATE KEY-----";
+
+// ---------------------------------------------------------------------------
+// Snapshot construction helpers
+// ---------------------------------------------------------------------------
+
+#[allow(unused_imports)]
+use rove::model::{RawAction, RawEgress, RawRoute, RawRoutingPolicy, RawUpstream};
+#[allow(unused_imports)]
+use std::collections::HashMap;
+
+/// Test-only sugar for building a routing policy.
+///
+/// The wire model is deliberately normalized (an ordered route list plus a
+/// separate named-egress table), which is verbose to spell out in a test that
+/// only cares about "these hosts take an egress, these are blocked". `PolicySpec`
+/// is the denormalized shorthand; [`PolicySpec::expand`] lowers it into the
+/// real `RawRoutingPolicy` + `RawEgress` pair the compiler consumes.
+///
+/// Route order is block-first, matching the block-veto semantics of
+/// `Snapshot::decide_with_sniff`.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Default)]
+pub struct PolicySpec {
+    /// Backend for hosts matched by `routed`. `None` = no egress route is emitted.
+    pub egress: Option<RawUpstream>,
+    /// Backend used when no route matches. `None` = direct.
+    pub default_egress: Option<RawUpstream>,
+    /// Selectors routed through `egress`.
+    pub routed: Vec<String>,
+    /// Selectors denied outright.
+    pub blocked: Vec<String>,
+}
+
+#[allow(dead_code)]
+impl PolicySpec {
+    /// Lower into a routing policy plus the named egresses it references,
+    /// using `id` to namespace the generated egress ids.
+    pub fn expand(self, id: &str) -> (RawRoutingPolicy, HashMap<String, RawEgress>) {
+        let mut egresses = HashMap::new();
+        let mut routes = Vec::new();
+
+        if !self.blocked.is_empty() {
+            routes.push(RawRoute {
+                selectors: self.blocked,
+                action: RawAction::Block,
+            });
+        }
+        // A routed selector with no egress would silently vanish from the
+        // compiled policy, quietly making the test assert nothing.
+        assert!(
+            self.egress.is_some() || self.routed.is_empty(),
+            "PolicySpec {id:?}: routed selectors require an egress"
+        );
+        if let Some(backend) = self.egress {
+            let egress_id = format!("{id}-egress");
+            egresses.insert(egress_id.clone(), RawEgress::Upstream { backend });
+            if !self.routed.is_empty() {
+                routes.push(RawRoute {
+                    selectors: self.routed,
+                    action: RawAction::Egress { egress: egress_id },
+                });
+            }
+        }
+        let default_egress = self.default_egress.map(|backend| {
+            let egress_id = format!("{id}-default");
+            egresses.insert(egress_id.clone(), RawEgress::Upstream { backend });
+            egress_id
+        });
+
+        (
+            RawRoutingPolicy {
+                routes,
+                default_egress,
+            },
+            egresses,
+        )
+    }
+
+    /// Lower into the `routing_policies` / `egresses` tables of a snapshot.
+    pub fn into_tables(
+        self,
+        id: &str,
+    ) -> (
+        HashMap<String, RawRoutingPolicy>,
+        HashMap<String, RawEgress>,
+    ) {
+        let (policy, egresses) = self.expand(id);
+        (HashMap::from([(id.to_string(), policy)]), egresses)
+    }
+}

@@ -1,6 +1,0 @@
-{
-  "schema_version": 2,
-  "version": 1,
-  "users": { "u": { "password": "x", "policy": "p" } },
-  "groups": { "g": { "proxy": [], "block": [] } }
-}

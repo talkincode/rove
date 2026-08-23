@@ -158,7 +158,7 @@ timeout_ms = 500   # 1..5000；route 会等待这个窗口，observe 不会延�
 固定枚举计数；不保存 URL、HTTP body、header 集合或 TLS payload。ECH 内层域名、QUIC/HTTP3 和 UDP 不可见。
 
 `route` 与 TUIC 共用同一套安全规则（见下方 `[tuic_listeners.sniff]`）：任一候选命中 block 即拒绝；只有
-requested 是 IP 时 sniffed 域名才能选 proxy 出口；实际拨号目标永不改写。timeout / unsupported /
+requested 是 IP 时 sniffed 域名才能命中 egress route 选择出口；实际拨号目标永不改写。timeout / unsupported /
 malformed 回退到只按 requested host 决策，已读字节照常回放。
 客户端怎么连见 [客户端接入](./client-setup.md)。
 
@@ -447,9 +447,8 @@ poll_interval_secs = 300
 | `path` | `rove-abctl build` 产出的本地 `.rab` 工件。配置后缺失、不可读、超过 256 MiB 或校验失败都会拒绝启动。 |
 | `poll_interval_secs` | 缺省 `300`；轮询本地文件变化并尝试原子热替换。`0` 表示只在重启时加载。 |
 
-控制面快照可在 schema v4 的 route `selectors`（或兼容 v3 的 `proxy` / `block`）里用
-`book:<category>` 引用层级分类；任何 `book:` 规则都要求 `schema_version >= 3`（推荐直接发 v4）。
-未知分类、未配置地址簿或 selector 内存超限会拒绝整份新快照并保留旧策略。
+控制面快照可在 route `selectors` 里用 `book:<category>` 引用层级分类；`book:` 规则不需要额外
+schema 版本门槛。未配置地址簿、未知分类或 selector 内存超限会拒绝整份新快照并保留旧策略。
 运行期新工件必须先通过完整格式校验，再用它重新编译最近一次成功快照；任一步失败都保留旧书与旧快照。
 
 Rove 不读取 manifest、不自动下载工件。生产应在独立发布流程中执行 `fetch → build → verify/query → diff`，

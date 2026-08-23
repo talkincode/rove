@@ -94,8 +94,8 @@ where
             return write_failure(&mut stdout, "decode", "snapshot decode failed");
         }
     };
-    let routing_policies = document.routing_policy_count();
-    let egresses = document.egress_definition_count();
+    let routing_policies = document.routing_policies.len();
+    let egresses = document.egresses.len();
     let snapshot = match Snapshot::compile_with_book(document, &args.node_id, book.as_ref()) {
         Ok(snapshot) => snapshot,
         Err(_) => {

@@ -39,17 +39,17 @@ fn health_endpoints_report_snapshot_and_sustained_control_plane_failure() {
     std::fs::write(
         &cache_path,
         r#"{
+  "schema_version": 1,
   "version": 42,
   "users": {
     "alice": {
       "password": "secret",
-      "group": "default"
+      "policy": "default"
     }
   },
-  "groups": {
+  "routing_policies": {
     "default": {
-      "proxy": [],
-      "block": []
+      "routes": []
     }
   }
 }"#,

@@ -8,8 +8,8 @@ use anyhow::Context;
 use base64::Engine as _;
 use rove::engine::Engine;
 use rove::model::{
-    Decision, RawRoutingPolicy, RawSnapshotV4, RawUserV4, Snapshot, Upstream, UpstreamKind,
-    V4_SCHEMA_VERSION,
+    Decision, RawRoutingPolicy, RawSnapshot, RawUser, Snapshot, Upstream, UpstreamKind,
+    SCHEMA_VERSION,
 };
 use rove::subnetra::config::{PeerConfig, SubnetraConfig};
 use rove::subnetra::{netstack, reactor, service};
@@ -1019,7 +1019,7 @@ async fn start_spoke_net(hub_udp: SocketAddr, mtu: usize) -> anyhow::Result<nets
 fn permissive_engine() -> Arc<Engine> {
     let users = HashMap::from([(
         USERNAME.to_string(),
-        RawUserV4 {
+        RawUser {
             password: PASSWORD.to_string(),
             expire: None,
             up_rate: 0,
@@ -1033,8 +1033,8 @@ fn permissive_engine() -> Arc<Engine> {
 
     let engine = Engine::new();
     let snapshot = Snapshot::compile(
-        RawSnapshotV4 {
-            schema_version: V4_SCHEMA_VERSION,
+        RawSnapshot {
+            schema_version: SCHEMA_VERSION,
             version: 1,
             users,
             routing_policies,

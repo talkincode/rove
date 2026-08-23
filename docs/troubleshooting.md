@@ -37,12 +37,12 @@ jq 'select(.kind=="connection" and .username=="alice" and .result!="success")' l
 
 ## 分流不生效
 
-- **本该走上游却直连了**（schema v4）：确认目标命中了 policy `routes[].selectors`，且 action 指向
+- **本该走上游却直连了**（当前快照 schema）：确认目标命中了 policy `routes[].selectors`，且 action 指向
   正确的 named egress。注意匹配规则 —— 默认是**后缀匹配**，`full:` 才是精确。IP 目标要用 CIDR
   （如 `10.0.0.0/8`）。
 - **本该直连却走了上游**：检查是否配了 `default_egress`（它会兜底所有未命中 route 的目标）。
-- **顺序（v4）**：`routes` 数组 first-match-wins；未命中再用 `default_egress`，没有则直连。见
-  [数据模型 · Schema v4](./data-model.md#schema-v4可复用-routing-policy)。
+- **顺序**：`routes` 数组 first-match-wins；未命中再用 `default_egress`，没有则直连。见
+  [数据模型](./data-model.md)。
 - 日志里 `decision` 会显示实际走向：`direct` / `block` / `upstream:<addr>` / `reverse:<hop_id>` /
   `chain:<id>`。
 
@@ -70,8 +70,8 @@ curl -H "Authorization: <token>" "https://control.example.com/snapshot?since=0" 
 | 现象 | 排查 |
 |---|---|
 | 节点启动即失败 | 对 `[addrbook].path` 运行 `rove-abctl verify`；再检查权限、256 MiB 上限与容器目录挂载。 |
-| 新快照报 `book: rules require schema_version 3` | 任何 `book:` 规则都要求顶层 `schema_version >= 3`；新控制面请直接发 schema v4。内容修订号 `version` 仍需独立递增。 |
-| 新快照报 unknown category | 用 `rove-abctl inspect book.rab --categories` 核对分类；未知分类会拒绝整份快照。 |
+| 新快照报 `no [addrbook]` | 快照引用了 `book:` selector，但节点未配置 `[addrbook]`；配置并验证本地 `.rab`，或先移除该 selector。 |
+| 新快照报 `unknown addrbook category` | 用 `rove-abctl inspect book.rab --categories` 核对分类；错误信息会带上未知分类名，未知分类会拒绝整份快照。 |
 | 新书未热替换 | 查运行日志中的 `addrbook reload failed` / `new addrbook rejected`；新书缺少当前快照引用的分类时会保留旧书。 |
 | 域名未命中云厂商 IP 段 | 域名请求不会先 DNS 解析再查 IP 分类；给地址簿补充相应域名数据源。 |
 | Docker 中始终是旧书 | 不要 bind mount 单个文件；挂载目录并在目录内原子替换 `.rab`。 |

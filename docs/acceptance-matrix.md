@@ -49,8 +49,8 @@
 | hop MQTT egress doctor | ✅ | ✅ | ✅ | — 只读一次探测，无状态写入 | ✅ `hop_mqtt_integration` |
 | 优雅停机（SIGINT/SIGTERM） | ✅ | ✅ | — 无身份语义 | ✅ | ✅ `shutdown_integration` |
 | 配置解析（TOML） | ✅ | ✅ | — 无身份语义 | — 解析不修改外部状态 | — 单元层验收即可 |
-| rove-addrbook（`.rab` 数据集 + `book:` 规则） | ✅ | ✅ 未知分类/缺书拒快照 | — 无独立用户角色，沿用组策略 | ✅ 坏工件保旧书、坏书换失败不动快照 | ✅ `addrbook_integration`（含 golden 向量） |
-| Snapshot schema v4（routing policy + named egress） | ✅ | ✅ 严格混用/缺失引用/坏 override 拒绝 | ✅ v4 policy 与未知用户 fail-closed | ✅ 坏 v4 不替换内存快照/cache | ✅ `snapshot_v4_integration` / `snapshot_validator_integration` |
+| rove-addrbook（`.rab` 数据集 + `book:` 规则） | ✅ | ✅ 未知分类/缺书拒快照 | — 无独立用户角色，沿用 policy/route | ✅ 坏工件保旧书、坏书换失败不动快照 | ✅ `addrbook_integration`（含 golden 向量） |
+| Snapshot routing schema（routing policy + named egress） | ✅ | ✅ 未知字段/缺失引用/坏 override 拒绝 | ✅ policy 与未知用户 fail-closed | ✅ 坏快照不替换内存快照/cache | ✅ `snapshot_routing_integration` / `snapshot_validator_integration` |
 
 ## 测试锚点明细
 
@@ -107,13 +107,13 @@
 
 - Happy Path：`src/policy/domain.rs::suffix_matches_subdomains` / `full_and_keyword`、
   `src/policy/ip.rs::single_and_cidr` / `many_exact_hosts_keep_or_semantics`、
-  `src/model.rs::v4_first_match_keeps_declaration_order_on_overlap` /
-  `v4_indexed_first_match_agrees_with_linear_scan`（索引与线性扫描对同一 host 集同结果）、
-  `tests/snapshot_v4_integration.rs::overlapping_routes_resolve_in_declaration_order`
-- 失败路径（fail-closed）：`src/model.rs::decide_blocks_when_user_or_group_is_missing`、
+  `src/model.rs::first_match_keeps_declaration_order_on_overlap` /
+  `indexed_first_match_agrees_with_linear_scan`（索引与线性扫描对同一 host 集同结果）、
+  `tests/snapshot_routing_integration.rs::overlapping_routes_resolve_in_declaration_order`
+- 失败路径（fail-closed）：`src/model.rs::decide_blocks_for_an_unknown_user_or_a_dangling_policy`、
   `tests/proxy_integration.rs::http_connect_blocked_by_policy_returns_403_without_dialing_out`
-- 角色：block 组用户被拒 vs direct 组用户放行（`proxy_integration` 中不同 group 的引擎构造）
-- 复杂度回归：`src/model.rs::v4_many_full_routes_miss_stays_sublinear`
+- 角色：block policy 用户被拒 vs direct policy 用户放行（`proxy_integration` 中不同 policy 的引擎构造）
+- 复杂度回归：`src/model.rs::many_full_routes_miss_stays_sublinear`
   （2000 条 `full:` 路由 × 20000 次未命中必须低于 80 ms，锁住 O(n) 回潮）
 
 ### 出站（direct / HTTP upstream / SOCKS5 upstream）
@@ -144,27 +144,27 @@
 ### 控制面快照同步 / 缓存 / 热替换
 
 - Happy Path：`src/sync/mod.rs::sync_once_applies_remote_snapshot_and_saves_cache`、
-  `load_cache_accepts_valid_snapshot`、`load_cache_accepts_legacy_userdata`
+  `load_cache_accepts_valid_snapshot`
 - 失败路径：`sync_once_rejects_invalid_remote_snapshot_without_overwriting_cache`、
   `load_cache_reports_invalid_snapshot_compile_error`、`load_cache_rejects_oversized_file`
 - 恢复/回滚：无效快照不覆盖缓存（同上）、temp-then-rename 原子写
   `save_cache_round_trips_valid_snapshot` 与私有权限 `save_cache_writes_private_file_permissions`、
   304/旧版本不替换 `sync_once_treats_304_and_stale_versions_as_no_update`
-- 编译门禁：`src/model.rs::compile_rejects_unknown_user_group` 等 `compile_*` 系列、
-  node_overrides 覆盖 `compile_applies_node_specific_override_for_matching_node_id`
+- 编译门禁：`src/model.rs::compile_rejects_a_user_bound_to_an_unknown_policy` 等 `compile_*` 系列、
+  node_overrides 覆盖 `compile_applies_node_specific_egress_override_for_matching_node_id`
 - 双角色：合法 token 同步成功（Happy Path 系列）vs 控制面 401/403 拒绝 token 时
   fail-closed —— 同步失败、继续热服务已加载快照、缓存文件逐字节不变
   `sync_once_rejected_token_fails_closed_without_touching_cache`
 - 进程级 E2E：`tests/snapshot_sync_integration.rs` 拉起真实 `rove` 进程：远程快照热替换后
   block 生效、坏快照不覆盖缓存、401 保持旧快照继续服务。
 
-### Snapshot schema v4
+### Snapshot routing schema
 
-- Happy Path：`tests/snapshot_v4_integration.rs` 覆盖 egress A/B、单 backend/chain、direct、
+- Happy Path：`tests/snapshot_routing_integration.rs` 覆盖 egress A/B、单 backend/chain、direct、
   block、default egress/direct、overlap/order、IP/CIDR、book 与 sniff safety。
 - 失败路径：同文件 `strict_rejections_fail_closed`、`node_override_introducing_new_egress_fails_closed`；
-  `src/sync/mod.rs::sync_once_rejects_v4_missing_refs_without_replacing_snapshot_or_cache`。
-- inspection：`src/mqtt.rs::user_policy_query_exposes_v4_routes_and_named_egresses_without_credentials`。
+  `src/sync/mod.rs::sync_once_rejects_missing_egress_refs_without_replacing_snapshot_or_cache`。
+- inspection：`src/mqtt.rs::user_policy_query_exposes_routes_and_named_egresses_without_credentials`。
 - public validator：`tests/snapshot_validator_integration.rs` 覆盖 file/stdin、node override、
   addrbook、decode/compile/read/arguments 失败阶段与凭据安全 JSON。
 
@@ -222,9 +222,9 @@
 - Happy Path：`tests/tuic_integration.rs::tuic_route_unmatched_sniff_replays_captured_prefix_to_requested_ip`、
   `tuic_route_sniffed_proxy_selects_egress_but_dials_requested_ip`
 - 失败路径（fail-closed）：`tests/tuic_integration.rs::tuic_route_sniffed_block_prevents_requested_ip_dial`
-  验证 sniffed block 在任何目标拨号前拒绝；`src/model.rs::decide_prefers_special_upstream_then_default_upstream`
-  覆盖 requested block / sniffed block 任一命中即 block、IP 目标按 sniffed 域名选出口、显式域名不被
-  sniffed proxy 规则改路。
+  验证 sniffed block 在任何目标拨号前拒绝；`tests/snapshot_routing_integration.rs::requested_block_vetoes_before_sniffed_host`
+  / `requested_ip_uses_non_block_sniffed_action_first` 覆盖 requested block / sniffed block 任一命中即
+  block、IP 目标按 sniffed 域名选出口、显式域名不被 sniffed egress route 改路。
 - 捕获边界：`src/sniff.rs::prefix_capture_returns_match_and_every_consumed_byte` /
   `prefix_capture_times_out_without_waiting_for_stream_eof` /
   `prefix_capture_enforces_limit_and_preserves_captured_byte`
@@ -342,11 +342,10 @@
   隧道端到端可通字节；`book_domain_block_applies_to_requested_host` 验证域名类分类命中。
 - 失败路径（fail-closed）：`snapshot_with_unknown_book_category_is_rejected` 验证未知分类
   拒绝整个快照；`snapshot_with_book_rules_but_no_book_is_rejected` 验证配置了 `book:` 规则
-  但节点无 `[addrbook]` 时快照编译失败；`book_rules_require_snapshot_schema_v3` 验证旧
-  schema 明确拒绝新规则语义；`startup_with_unloadable_artifact_is_a_hard_error` 验证
+  但节点无 `[addrbook]` 时快照编译失败；`startup_with_unloadable_artifact_is_a_hard_error` 验证
   缺失/损坏工件启动即拒绝。
-- 角色/凭据：无独立用户角色——addrbook 只提供地址数据，判定归属沿用组策略
-  （`proxy_integration` 已覆盖组/用户角色结局）。
+- 角色/凭据：无独立用户角色——addrbook 只提供地址数据，判定归属沿用 policy/route
+  （`proxy_integration` 已覆盖 policy/用户角色结局）。
 - 恢复/回滚：`corrupt_artifact_on_reload_keeps_previous_book` 验证单字节损坏被校验和
   拦下且旧书继续服务；`addrbook_swap_recompiles_snapshot_atomically_and_rejects_bad_books`
   验证换书 = 重编译最近快照原子替换（旧规则语义消失、新语义生效），且新书缺分类时

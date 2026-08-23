@@ -112,7 +112,7 @@ impl RuleSet {
     }
 }
 
-/// Compiled first-match index for schema-v4 routes. Each selector stores the
+/// Compiled first-match index for routing-policy routes. Each selector stores the
 /// smallest route index that contains it, so a query walks each matcher once
 /// and still preserves declaration order.
 #[derive(Default)]
