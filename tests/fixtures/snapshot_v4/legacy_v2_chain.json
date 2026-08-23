@@ -1,0 +1,26 @@
+{
+  "schema_version": 2,
+  "version": 13,
+  "users": {
+    "carol": {
+      "password": "carol-login-secret",
+      "group": "rule-a",
+      "max_connections": 2
+    }
+  },
+  "groups": {
+    "rule-a": {
+      "upstream": { "kind": "chain", "addr": "jp-pop" },
+      "proxy": ["proxied.example.com"],
+      "block": ["blocked.example.com"]
+    }
+  },
+  "chains": {
+    "jp-pop": {
+      "members": [
+        { "id": "a", "priority": 10, "backend": { "kind": "http", "addr": "a.example:8443" } },
+        { "id": "b", "priority": 20, "backend": { "kind": "socks5", "addr": "b.example:1080" } }
+      ]
+    }
+  }
+}

@@ -1,0 +1,3 @@
+doubleclick.net
+full:ads.google.example
+keyword:adservice

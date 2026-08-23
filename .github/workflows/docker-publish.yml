@@ -1,0 +1,81 @@
+name: Docker Publish
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing Git tag to build, for example v0.1.0"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  IMAGE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
+concurrency:
+  group: docker-publish-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  quality:
+    name: Full quality gate
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', github.event.inputs.tag) || github.ref }}
+      release_tag: ${{ github.event.inputs.tag || github.ref_name }}
+
+  build-and-push:
+    name: Build and push ${{ matrix.image_name }}
+    needs: quality
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image_name: rove
+            dockerfile: ./Dockerfile
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.quality.outputs.checked_sha }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build image and push to GitHub Container Registry
+        id: docker_build
+        uses: docker/build-push-action@v6
+        with:
+          context: ./
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          cache-from: type=gha,scope=docker-${{ matrix.image_name }}
+          cache-to: type=gha,mode=max,scope=docker-${{ matrix.image_name }}
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ needs.quality.outputs.checked_sha }}
+            org.opencontainers.image.version=${{ env.IMAGE_TAG }}
+          push: true
+
+      - name: Image digest
+        run: echo "${{ steps.docker_build.outputs.digest }}"

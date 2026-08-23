@@ -1,0 +1,106 @@
+[package]
+name = "rove"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+description = "Rove is an application-network optimizer: a single-binary forward proxy for Agent APIs, trading, and other latency-sensitive app paths"
+license = "MIT"
+repository = "https://github.com/talkincode/rove"
+homepage = "https://github.com/talkincode/rove"
+documentation = "https://talkincode.github.io/rove/"
+readme = "README.md"
+authors = ["talkincode"]
+keywords = ["proxy", "socks5", "network", "edge"]
+categories = ["network-programming", "command-line-utilities"]
+
+[[bin]]
+name = "rove"
+path = "src/main.rs"
+
+[[bin]]
+name = "rove-hop"
+path = "src/bin/rove-hop.rs"
+
+[[bin]]
+name = "rove-relay"
+path = "src/bin/rove-relay.rs"
+
+[[bin]]
+name = "rove-abctl"
+path = "src/bin/rove-abctl.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "time", "sync", "signal"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+# NOTE: rumqttc pins its own direct `rustls-webpki = "^0.102.8"` dependency
+# (separate from the patched 0.103.13 copy used by our own rustls/reqwest),
+# which trips 4 Dependabot advisories that are not exploitable for our
+# usage (no CRL/RevocationOptions anywhere in Rove or rumqttc's TLS
+# connector). rumqttc 0.25.1 is the latest release; there is no version
+# bump available yet. See .cargo/audit.toml for the full evidence and the
+# `cargo audit` ignore list that documents this risk acceptance.
+rumqttc = "0.25"
+arc-swap = "1"
+ipnet = { version = "2", features = ["serde"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+anyhow = "1"
+thiserror = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+# Non-blocking, time-based-rotation writer for the structured JSONL access
+# log (see src/access_log.rs). Retention pruning on top of its daily rotation
+# is hand-rolled; syslog forwarding (RFC 3164 over UDP/TCP) is hand-rolled too
+# to avoid a second logging dependency.
+tracing-appender = "0.2"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+# Reverse-hop data plane (src/reverse/): QUIC transport so a NAT'd hop can dial
+# the edge and the edge multiplexes one bi-stream per user tunnel. ring backend
+# only (no aws-lc-rs / platform-verifier) to stay on the same crypto provider as
+# the rest of the tree; already resolved transitively via reqwest.
+quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
+# SNMP agent (src/snmp/): constant-time credential comparison now, HMAC /
+# SHA-based key localization and salts for SNMPv3 USM. Already in the tree
+# via rustls's ring backend, so this adds no new build dependency.
+ring = "0.17"
+# Subnetra data plane (src/subnetra/): the wire protocol's KDF is BLAKE2b-256 in
+# *native keyed mode* (NOT HMAC), which ring does not expose. `blake2` (RustCrypto)
+# provides `Blake2bMac<U32>`; its byte output is pinned to the cross-implementation
+# KAT in tests/subnetra_conformance.rs so any drift from the Zig reference fails CI.
+# The AEAD half (ChaCha20-Poly1305) reuses `ring` above, so this is the only new dep.
+blake2 = "0.10"
+# Subnetra userspace IP stack (src/subnetra/netstack/): terminates the overlay's
+# inner TCP without a kernel TUN, so a NAT'd spoke's stream can be handed to Rove's
+# HTTP/SOCKS dispatch (hub) or originated as egress (spoke). Minimal feature set:
+# a bare-IPv4 medium + TCP sockets, no Ethernet/ARP/IPv6/DHCP. smoltcp is
+# no-std-first with a tiny, well-audited dependency tail (managed/bitflags/cfg-if).
+smoltcp = { version = "0.12", default-features = false, features = [
+    "std",
+    "medium-ip",
+    "proto-ipv4",
+    "socket-tcp",
+] }
+# SNMPv3 privacy (RFC 3826): AES-128 block cipher; CFB128 mode is hand-rolled
+# in src/snmp/usm.rs and checked against NIST SP 800-38A vectors.
+aes = "0.8"
+webpki-roots = "0.26"
+base64 = "0.22"
+url = "2"
+bytes = "1"
+hickory-resolver = { version = "0.26", default-features = false, features = ["tokio", "system-config", "tls-ring", "https-ring"] }
+httparse = "1.10.1"
+
+[dev-dependencies]
+# The reverse-hop integration tests (tests/reverse_hop_integration.rs) drive a
+# raw QUIC client for the deterministic auth / duplicate-registration cases, so
+# they need quinn directly. Same version/features as the main dependency, so no
+# extra resolution cost.
+quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = true

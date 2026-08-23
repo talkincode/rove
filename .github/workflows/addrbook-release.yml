@@ -1,0 +1,213 @@
+name: Address Book Release
+
+# 定期把 addrbook/book.toml 描述的数据集构建成 .rab 并发布到滚动
+# Release 标签 addrbook-latest，提供稳定下载 URL：
+#   https://github.com/talkincode/rove/releases/download/addrbook-latest/book.rab
+#   https://github.com/talkincode/rove/releases/download/addrbook-latest/rove-addrbook.json
+#
+# fail-closed：verify、diff 异常门、query 探针、最小规模断言任一失败
+# 都不会触碰已发布资产，节点继续使用旧数据。
+# rove-addrbook.json 是控制面 sidecar（TeamsEdge PAC/分类目录），与 book.rab 同源同 epoch。
+
+on:
+  schedule:
+    # 每周一 02:17 UTC（北京 10:17）；避开整点排队高峰。
+    - cron: "17 2 * * 1"
+  push:
+    branches:
+      - main
+    paths:
+      - "addrbook/**"
+      - "scripts/addrbook-refresh.sh"
+      - ".github/workflows/addrbook-release.yml"
+  workflow_dispatch:
+    inputs:
+      skip_diff_gate:
+        description: >-
+          Skip the diff anomaly gate. Only for expected shrink or category
+          removal (for example upstream renamed a service tag).
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: addrbook-release
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_TOOLCHAIN: 1.88.0
+  RELEASE_TAG: addrbook-latest
+
+jobs:
+  build-and-publish:
+    name: Build and publish address book
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install "${RUST_TOOLCHAIN}" --profile minimal
+          rustup default "${RUST_TOOLCHAIN}"
+          rustc --version
+          cargo --version
+
+      - name: Cache Cargo state
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-abctl-rust-${{ env.RUST_TOOLCHAIN }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-abctl-rust-${{ env.RUST_TOOLCHAIN }}-cargo-
+
+      - name: Build rove-abctl
+        run: cargo build --release --locked --bin rove-abctl
+
+      - name: Download previous release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p addrbook/data/upstream /tmp/previous
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            # 上一版工件供 diff 异常门使用
+            gh release download "${RELEASE_TAG}" --pattern book.rab \
+              --output /tmp/previous/book.rab || true
+            # Azure 发布页直链每周轮换且偶发 403；上一版 JSON 作为刷新失败时的降级种子
+            gh release download "${RELEASE_TAG}" --pattern azure-service-tags.json \
+              --output addrbook/data/upstream/azure-service-tags.json || true
+          fi
+          ls -l /tmp/previous addrbook/data/upstream || true
+
+      - name: Refresh upstream sources
+        run: ./scripts/addrbook-refresh.sh
+
+      - name: Build artifact
+        id: build
+        run: |
+          set -euo pipefail
+          epoch="$(date -u +%Y%m%d%H%M%S)"
+          ./target/release/rove-abctl build \
+            --manifest addrbook/book.toml \
+            --out dist-book.rab \
+            --epoch "${epoch}"
+          echo "epoch=${epoch}" >> "${GITHUB_OUTPUT}"
+
+      - name: Verify artifact
+        run: ./target/release/rove-abctl verify dist-book.rab
+
+      - name: Diff anomaly gate
+        if: ${{ inputs.skip_diff_gate != true }}
+        run: |
+          set -euo pipefail
+          if [ ! -f /tmp/previous/book.rab ]; then
+            echo "no previous release artifact; skipping diff gate (first publish)"
+            exit 0
+          fi
+          if ! ./target/release/rove-abctl verify /tmp/previous/book.rab; then
+            echo "previous artifact no longer verifies (format migration?);" \
+                 "re-run with skip_diff_gate=true after manual review" >&2
+            exit 1
+          fi
+          ./target/release/rove-abctl diff /tmp/previous/book.rab dist-book.rab --max-shrink 30
+
+      - name: Query probes and size floor
+        run: |
+          set -euo pipefail
+          abctl=./target/release/rove-abctl
+          # 长期稳定的正向探针；易漂移的第三方 IP 不放这里，交给 diff 门。
+          "${abctl}" query dist-book.rab www.google.com geosite/google
+          "${abctl}" query dist-book.rab www.baidu.com geosite/cn
+          "${abctl}" query dist-book.rab doubleclick.net geosite/category-ads-all
+          "${abctl}" query dist-book.rab 8.8.8.8 google-infra
+          "${abctl}" query dist-book.rab 104.16.1.1 cloudflare
+          "${abctl}" query dist-book.rab 10.20.1.8 corp
+          # 负向探针：不匹配必须退出 1
+          if "${abctl}" query dist-book.rab unlisted-host.invalid ads; then
+            echo "negative probe unexpectedly matched" >&2
+            exit 1
+          fi
+          # 最小规模断言：防止上游悄悄清空导致的灾难性缩水
+          inspect="$("${abctl}" inspect dist-book.rab)"
+          echo "${inspect}"
+          categories="$(sed -n 's/^categories \([0-9]*\)$/\1/p' <<<"${inspect}")"
+          ip4="$(sed -n 's/.*ip4=\([0-9]*\).*/\1/p' <<<"${inspect}")"
+          suffix="$(sed -n 's/.*suffix=\([0-9]*\).*/\1/p' <<<"${inspect}")"
+          test "${categories}" -ge 100
+          test "${ip4}" -ge 10000
+          test "${suffix}" -ge 5000
+
+      - name: Export control-plane sidecar JSON
+        run: |
+          set -euo pipefail
+          ./target/release/rove-abctl export dist-book.rab --out dist-rove-addrbook.json
+          # Fail closed if the sidecar is empty or tiny (schema/header only).
+          test "$(wc -c < dist-rove-addrbook.json)" -ge 10240
+
+      - name: Assemble release assets
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp dist-book.rab dist/book.rab
+          cp dist-rove-addrbook.json dist/rove-addrbook.json
+          (cd dist && sha256sum book.rab > book.rab.sha256)
+          (cd dist && sha256sum rove-addrbook.json > rove-addrbook.json.sha256)
+          # Azure JSON 一并发布：既是数据来源审计凭据，也是下次运行的降级种子
+          cp addrbook/data/upstream/azure-service-tags.json dist/
+          {
+            echo "built_utc: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "source_commit: ${GITHUB_SHA}"
+            echo "workflow_run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo "epoch: ${{ steps.build.outputs.epoch }}"
+            echo
+            echo "== rove-abctl inspect =="
+            ./target/release/rove-abctl inspect dist-book.rab
+            echo
+            echo "== upstream file checksums =="
+            find addrbook/data/upstream -type f | LC_ALL=C sort | xargs sha256sum
+          } > dist/SOURCES.txt
+          ls -l dist
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          {
+            echo "Rolling address book data release. Stable download URLs:"
+            echo
+            echo '```'
+            echo "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/book.rab"
+            echo "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/book.rab.sha256"
+            echo "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/rove-addrbook.json"
+            echo "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/rove-addrbook.json.sha256"
+            echo '```'
+            echo
+            echo "- epoch: \`${{ steps.build.outputs.epoch }}\`"
+            echo "- book.rab sha256: \`$(cut -d' ' -f1 dist/book.rab.sha256)\`"
+            echo "- rove-addrbook.json sha256: \`$(cut -d' ' -f1 dist/rove-addrbook.json.sha256)\`"
+            echo "- built from: \`${GITHUB_SHA}\` ([run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}))"
+            echo "- provenance: \`SOURCES.txt\`"
+            echo
+            echo "Rove nodes load \`book.rab\`. Control planes (TeamsEdge) load \`rove-addrbook.json\`."
+            echo "Verify before loading: \`rove-abctl verify book.rab\` and \`sha256sum -c book.rab.sha256\`."
+            echo "See docs/addrbook-format.md for node wiring."
+          } > /tmp/notes.md
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            gh release upload "${RELEASE_TAG}" dist/* --clobber
+            gh release edit "${RELEASE_TAG}" --prerelease \
+              --title "Address Book (rolling)" --notes-file /tmp/notes.md
+          else
+            gh release create "${RELEASE_TAG}" dist/* \
+              --target "${GITHUB_SHA}" --prerelease \
+              --title "Address Book (rolling)" --notes-file /tmp/notes.md
+          fi

@@ -1,0 +1,30 @@
+# Public reverse-ingress relay. Run with:
+# Rove_NODE_EDGE_NAT_01_TOKEN='replace-me' rove-relay --config relay.toml
+
+relay_id = "relay-hangzhou-01"
+listen = "0.0.0.0:9444"       # QUIC control/data session; expose UDP
+public_bind = "0.0.0.0"        # Public TCP/UDP leases bind this address
+cert = "./certs/relay.crt"     # Relay tunnel certificate, not the user-facing proxy cert
+key = "./certs/relay.key"
+initial_mtu = 1452             # Quinn UDP payload for a 1500-byte IPv6 path
+max_streams = 4096
+lease_grace_secs = 30
+
+[[nodes]]
+node_id = "edge-nat-01"
+token_env = "Rove_NODE_EDGE_NAT_01_TOKEN"
+# During rotation, use token_envs = ["Rove_NODE_OLD_TOKEN", "Rove_NODE_NEW_TOKEN"]
+# temporarily; remove the old variable after every connector has switched.
+max_leases = 8
+max_tcp_connections = 4096
+max_udp_flows = 4096
+
+[[nodes.listeners]]
+id = "https-public"
+transport = "tcp"
+ports = ["443", "10443-10449"]
+
+[[nodes.listeners]]
+id = "tuic-public"
+transport = "udp"
+ports = ["8443", "10000-10099"]

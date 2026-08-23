@@ -1,0 +1,317 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing Git tag to publish, for example v0.1.0"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_TOOLCHAIN: 1.88.0
+  RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  quality:
+    name: Full quality gate
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', github.event.inputs.tag) || github.ref }}
+      release_tag: ${{ github.event.inputs.tag || github.ref_name }}
+
+  build:
+    name: Build ${{ matrix.name }}
+    needs: quality
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-amd64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive: tar
+          - name: linux-arm64
+            os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            archive: tar
+          - name: darwin-amd64
+            os: macos-13
+            target: x86_64-apple-darwin
+            archive: tar
+          - name: darwin-arm64
+            os: macos-15
+            target: aarch64-apple-darwin
+            archive: tar
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.quality.outputs.checked_sha }}
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install "${{ env.RUST_TOOLCHAIN }}" --profile minimal
+          rustup default "${{ env.RUST_TOOLCHAIN }}"
+          rustup target add "${{ matrix.target }}"
+          rustc --version
+          cargo --version
+
+      - name: Cache Cargo state
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ matrix.target }}-rust-${{ env.RUST_TOOLCHAIN }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.target }}-rust-${{ env.RUST_TOOLCHAIN }}-cargo-
+
+      # The reusable quality gate already tests the Linux host target on the
+      # exact checked SHA. Keep the additional tests for macOS release targets.
+      - name: Run platform tests
+        if: matrix.name != 'linux-amd64'
+        run: cargo test --locked --target "${{ matrix.target }}"
+
+      - name: Build release binaries
+        run: cargo build --release --locked --target "${{ matrix.target }}" --bins
+
+      - name: Package Unix archive
+        if: matrix.archive == 'tar'
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_dir="dist/package"
+          mkdir -p "${package_dir}"
+          for binary in rove rove-hop rove-relay rove-abctl; do
+            source="target/${{ matrix.target }}/release/${binary}"
+            if [[ -f "${source}" ]]; then
+              cp "${source}" "${package_dir}/"
+            fi
+          done
+          test -f "${package_dir}/rove"
+          test -f "${package_dir}/rove-abctl"
+          for file in README.md LICENSE config.example.toml relay.example.toml; do
+            if [[ -f "${file}" ]]; then
+              cp "${file}" "${package_dir}/"
+            fi
+          done
+          tar -C "${package_dir}" -czf "dist/rove-${{ matrix.name }}.tar.gz" .
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: rove-${{ matrix.name }}
+          path: dist/rove-${{ matrix.name }}.tar.gz
+          if-no-files-found: error
+
+
+  routeros-hop:
+    name: Build RouterOS hop package
+    needs: quality
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            target: aarch64-unknown-linux-musl
+          - arch: amd64
+            target: x86_64-unknown-linux-musl
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.quality.outputs.checked_sha }}
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install "${{ env.RUST_TOOLCHAIN }}" --profile minimal
+          rustup default "${{ env.RUST_TOOLCHAIN }}"
+          rustup target add "${{ matrix.target }}"
+          rustc --version
+          cargo --version
+
+      - name: Install zig and cargo-zigbuild
+        run: |
+          set -euo pipefail
+          ZIG_VER=0.13.0
+          ZIG_DIR="/tmp/zig-linux-x86_64-${ZIG_VER}"
+          curl -sL "https://ziglang.org/download/${ZIG_VER}/zig-linux-x86_64-${ZIG_VER}.tar.xz" | tar -xJ -C /tmp
+          # GITHUB_PATH only affects later steps; export PATH for this step too.
+          echo "${ZIG_DIR}" >> "$GITHUB_PATH"
+          export PATH="${ZIG_DIR}:${PATH}"
+          command -v zig
+          zig version
+          cargo install cargo-zigbuild --locked
+          cargo zigbuild --help >/dev/null
+
+      - name: Cache Cargo state
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-routeros-${{ matrix.target }}-rust-${{ env.RUST_TOOLCHAIN }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-routeros-${{ matrix.target }}-rust-${{ env.RUST_TOOLCHAIN }}-cargo-
+
+      - name: Pack RouterOS hop bundle
+        run: |
+          chmod +x scripts/pack-routeros-hop.sh
+          ./scripts/pack-routeros-hop.sh \
+            --target "${{ matrix.target }}" \
+            --version "${{ env.RELEASE_TAG }}" \
+            --out-dir dist
+
+      - name: Upload RouterOS hop artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: rove-hop-routeros-${{ matrix.arch }}
+          path: |
+            dist/rove-hop-routeros-${{ env.RELEASE_TAG }}-${{ matrix.arch }}.tar.gz
+            dist/rove-hop-routeros-${{ env.RELEASE_TAG }}-${{ matrix.arch }}.sha256
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    runs-on: ubuntu-latest
+    needs:
+      - quality
+      - build
+      - routeros-hop
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.quality.outputs.checked_sha }}
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@v7
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -l dist
+
+      - name: Checksums
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum rove-*.tar.gz rove-hop-routeros-*.tar.gz 2>/dev/null | tee checksums.txt
+
+      - name: Create or update release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            gh release upload "${RELEASE_TAG}" dist/* --clobber
+          else
+            gh release create "${RELEASE_TAG}" dist/* --verify-tag --title "${RELEASE_TAG}" --notes-file CHANGELOG.md
+          fi
+
+  homebrew:
+    name: Update Homebrew tap
+    runs-on: ubuntu-latest
+    needs: publish
+    if: startsWith(github.ref, 'refs/tags/')
+    env:
+      HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+      HOMEBREW_TAP_REPO: talkincode/homebrew-tap
+    steps:
+      - name: Download release artifacts
+        if: ${{ env.HOMEBREW_TAP_TOKEN != '' }}
+        uses: actions/download-artifact@v7
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Render and push formula
+        if: ${{ env.HOMEBREW_TAP_TOKEN != '' }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION="${TAG#v}"
+          BASE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
+          cd dist
+          sha256sum rove-*.tar.gz > checksums.txt
+          sha() {
+            local hash
+            hash="$(awk -v f="$1" '$2 == f { print $1; exit }' checksums.txt)"
+            [ -n "$hash" ] || { echo "missing checksum for $1" >&2; exit 1; }
+            echo "$hash"
+          }
+          DARWIN_ARM64_SHA="$(sha rove-darwin-arm64.tar.gz)"
+          DARWIN_AMD64_SHA="$(sha rove-darwin-amd64.tar.gz)"
+          LINUX_ARM64_SHA="$(sha rove-linux-arm64.tar.gz)"
+          LINUX_AMD64_SHA="$(sha rove-linux-amd64.tar.gz)"
+          git clone --depth 1 \
+            "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/${HOMEBREW_TAP_REPO}.git" tap
+          mkdir -p tap/Formula
+          cat > tap/Formula/rove.rb <<EOF
+          class Rove < Formula
+            desc "Application network optimizer for Agent APIs and trading paths"
+            homepage "https://github.com/talkincode/rove"
+            version "${VERSION}"
+            license "MIT"
+
+            on_macos do
+              if Hardware::CPU.arm?
+                url "${BASE_URL}/rove-darwin-arm64.tar.gz"
+                sha256 "${DARWIN_ARM64_SHA}"
+              else
+                url "${BASE_URL}/rove-darwin-amd64.tar.gz"
+                sha256 "${DARWIN_AMD64_SHA}"
+              end
+            end
+
+            on_linux do
+              if Hardware::CPU.arm?
+                url "${BASE_URL}/rove-linux-arm64.tar.gz"
+                sha256 "${LINUX_ARM64_SHA}"
+              else
+                url "${BASE_URL}/rove-linux-amd64.tar.gz"
+                sha256 "${LINUX_AMD64_SHA}"
+              end
+            end
+
+            def install
+              bin.install "rove"
+              bin.install "rove-hop"
+              bin.install "rove-relay"
+              bin.install "rove-abctl"
+            end
+
+            test do
+              assert_predicate bin/"rove", :exist?
+            end
+          end
+          EOF
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/rove.rb
+          if git diff --cached --quiet; then
+            echo "Formula already up to date for ${VERSION}"
+          else
+            git commit -m "rove ${VERSION}"
+            git push
+          fi

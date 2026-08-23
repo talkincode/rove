@@ -1,0 +1,24 @@
+# Rust build artifacts
+/target
+
+# mdBook output
+/book
+
+# Local runtime state
+/data
+/.smoke
+
+# Env / secrets
+.env
+*.pem
+*.key
+*.crt
+!tests/fixtures/tls/secondary.key
+!tests/fixtures/tls/secondary.crt
+reports
+docker/local/certs/
+scripts/__pycache__/
+logs/
+
+# local release/packaging output
+/dist/

@@ -1,0 +1,21 @@
+# Upgrade trigger for the documented rustls-webpki risk acceptance.
+#
+# rumqttc 0.25.1 pins its own `rustls-webpki ^0.102.8`, which keeps a second,
+# unpatched webpki copy in the tree behind the four ignored advisories listed
+# in .cargo/audit.toml (verified unexploitable for Rove's usage). That risk
+# acceptance is conditional on "no newer rumqttc release exists" — this config
+# makes Dependabot open a PR the moment one does, so the ignores can be
+# dropped immediately. Scoped to rumqttc only: everything else is reviewed
+# manually via `cargo audit` in CI, which fails on any new advisory.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+    allow:
+      - dependency-name: rumqttc
+    labels:
+      - dependencies
+    commit-message:
+      prefix: "chore(deps)"

@@ -1,0 +1,9 @@
+{
+  "schema_version": 4,
+  "version": 1,
+  "egresses": {},
+  "routing_policies": {
+    "p": { "routes": [], "default_egress": "ghost" }
+  },
+  "users": { "u": { "password": "x", "policy": "p" } }
+}

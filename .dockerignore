@@ -1,0 +1,7 @@
+target/
+.git/
+.github/
+docker/local/certs/
+reports/
+*.log
+.DS_Store

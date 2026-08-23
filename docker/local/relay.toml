@@ -1,0 +1,40 @@
+relay_id = "local-ingress-relay"
+listen = "0.0.0.0:9444"
+public_bind = "0.0.0.0"
+cert = "/etc/rove/certs/local-rove.crt"
+key = "/etc/rove/certs/local-rove.key"
+initial_mtu = 1452
+max_streams = 4096
+lease_grace_secs = 30
+
+[[nodes]]
+node_id = "local-main"
+token_env = "Rove_NODE_LOCAL_MAIN_TOKEN"
+max_leases = 8
+max_tcp_connections = 4096
+max_udp_flows = 4096
+
+[[nodes.listeners]]
+id = "bench-http"
+transport = "tcp"
+ports = ["8080"]
+
+[[nodes.listeners]]
+id = "bench-https"
+transport = "tcp"
+ports = ["8443"]
+
+[[nodes.listeners]]
+id = "bench-socks5"
+transport = "tcp"
+ports = ["1080"]
+
+[[nodes.listeners]]
+id = "bench-socks5tls"
+transport = "tcp"
+ports = ["1081"]
+
+[[nodes.listeners]]
+id = "bench-tuic"
+transport = "udp"
+ports = ["10443"]

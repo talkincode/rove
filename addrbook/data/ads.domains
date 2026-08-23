@@ -1,0 +1,12 @@
+# RTP domains 规则语法示例（四种写法都会被规范化为小写）：
+#   example.com          后缀匹配（apex + 全部子域）
+#   *.example.com        同上的兼容写法
+#   full:a.example.com   只匹配完整域名
+#   keyword:tracker      规范化域名包含该子串
+# 也接受 IP/CIDR 行，与 cidrs 源语义相同。
+ads.example
+doubleclick.example
+*.banner.example
+full:telemetry.example
+keyword:adtracker
+198.51.100.0/24

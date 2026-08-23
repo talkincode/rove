@@ -1,0 +1,15 @@
+{
+  "schema_version": 4,
+  "version": 1,
+  "egresses": {
+    "e": { "type": "upstream", "backend": { "kind": "http", "addr": "p.example:8443" } }
+  },
+  "routing_policies": {
+    "p": {
+      "routes": [
+        { "selectors": ["a.example.com"], "action": { "type": "direct", "egress": "e" } }
+      ]
+    }
+  },
+  "users": { "u": { "password": "x", "policy": "p" } }
+}

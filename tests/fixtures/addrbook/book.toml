@@ -1,0 +1,20 @@
+# Golden-vector manifest: tests/addrbook_integration.rs rebuilds this book and
+# byte-compares it against tests/vectors/addrbook_v1.rab. Any change here (or
+# any encoder change) must regenerate the vector *and* be a conscious format
+# decision — the .rab layout is a stable protocol surface.
+epoch = 20260101
+
+[[source]]
+category = "google"
+kind = "cidrs"
+path = "data/google.cidrs"
+
+[[source]]
+category = "google/ads"
+kind = "v2fly-domains"
+path = "data/google-ads.txt"
+
+[[source]]
+category = "microsoft"
+kind = "domains"
+path = "data/microsoft.domains"

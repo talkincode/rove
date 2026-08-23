@@ -1,0 +1,15 @@
+#!/usr/bin/env sh
+# Fast local hygiene before every commit: formatting + lints only.
+# The full CI mirror (test/coverage/release build/whitespace) runs in
+# .githooks/pre-push, so commits stay quick and pushes stay safe.
+#
+# Emergency bypass: git commit --no-verify
+set -eu
+
+echo "[pre-commit] cargo fmt --check"
+cargo fmt --check
+
+echo "[pre-commit] cargo clippy --all-targets -- -D warnings"
+cargo clippy --all-targets -- -D warnings
+
+echo "[pre-commit] ok"

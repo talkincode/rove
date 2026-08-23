@@ -1,0 +1,103 @@
+node_id = "local-main"
+
+[control_plane]
+snapshot_url = "http://127.0.0.1:9/snapshot"
+token = "local-dev-token"
+poll_interval_secs = 3600
+cache_path = "/var/lib/rove/snapshot.json"
+
+[[listeners]]
+name = "http-in"
+protocol = "http"
+listen = "0.0.0.0:8080"
+
+[[listeners]]
+name = "https-in"
+protocol = "http"
+listen = "0.0.0.0:8443"
+[listeners.tls]
+cert = "/etc/rove/certs/local-rove.crt"
+key = "/etc/rove/certs/local-rove.key"
+
+[[listeners.tls.certificates]]
+server_names = ["alt.local-rove"]
+cert = "/etc/rove/certs/local-rove-alt.crt"
+key = "/etc/rove/certs/local-rove-alt.key"
+
+[[listeners]]
+name = "socks5-in"
+protocol = "socks5"
+listen = "0.0.0.0:1080"
+
+[[listeners]]
+name = "socks5tls-in"
+protocol = "socks5"
+listen = "0.0.0.0:1081"
+[listeners.tls]
+cert = "/etc/rove/certs/local-rove.crt"
+key = "/etc/rove/certs/local-rove.key"
+
+[[tuic_listeners]]
+name = "tuic-in"
+listen = "0.0.0.0:10443"
+cert = "/etc/rove/certs/local-rove.crt"
+key = "/etc/rove/certs/local-rove.key"
+alpn = ["h3"]
+
+[[reverse_ingress]]
+enable = true
+relay = "relay-ingress:9444"
+server_name = "local-rove"
+token_env = "Rove_INGRESS_RELAY_TOKEN"
+initial_mtu = 1452
+max_streams = 4096
+max_udp_flows = 4096
+reconnect_min_secs = 1
+reconnect_max_secs = 5
+
+[[reverse_ingress.listeners]]
+id = "bench-http"
+transport = "tcp"
+public_port = 8080
+local_listener = "http-in"
+
+[[reverse_ingress.listeners]]
+id = "bench-https"
+transport = "tcp"
+public_port = 8443
+local_listener = "https-in"
+
+[[reverse_ingress.listeners]]
+id = "bench-socks5"
+transport = "tcp"
+public_port = 1080
+local_listener = "socks5-in"
+
+[[reverse_ingress.listeners]]
+id = "bench-socks5tls"
+transport = "tcp"
+public_port = 1081
+local_listener = "socks5tls-in"
+
+[[reverse_ingress.listeners]]
+id = "bench-tuic"
+transport = "udp"
+public_port = 10443
+local_listener = "tuic-in"
+max_inner_datagram = 1200
+
+[log]
+level = "info"
+
+[mqtt]
+enable = false
+
+[reverse_hop]
+enable = true
+listen = "0.0.0.0:9443"
+cert = "/etc/rove/certs/local-rove.crt"
+key = "/etc/rove/certs/local-rove.key"
+tokens = ["local-reverse-token"]
+duplicate = "replace"
+max_streams_per_hop = 256
+open_timeout_secs = 10

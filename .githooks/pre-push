@@ -1,0 +1,71 @@
+#!/usr/bin/env sh
+# Local mirror of .github/workflows/ci.yml, run before every push so a commit
+# that would fail CI never leaves this machine.
+#
+# Steps match the "Rust quality gate" job exactly:
+#   fmt --check -> clippy -D warnings -> cargo audit -> test --locked ->
+#   llvm-cov --fail-under-lines 80 -> build --release --locked --bins ->
+#   git diff --check (whitespace) on the commits actually being pushed.
+#
+# Emergency bypass: git push --no-verify
+# Skip only the coverage gate (e.g. no network to install cargo-llvm-cov):
+#   Rove_SKIP_COVERAGE=1 git push
+# Skip only the dependency audit (e.g. no network to fetch advisory-db):
+#   Rove_SKIP_AUDIT=1 git push
+set -eu
+
+info() { printf '[pre-push] %s\n' "$1"; }
+
+info "cargo fmt --check"
+cargo fmt --check
+
+info "cargo clippy --all-targets -- -D warnings"
+cargo clippy --all-targets -- -D warnings
+
+if [ "${Rove_SKIP_AUDIT:-0}" = "1" ]; then
+    info "Rove_SKIP_AUDIT=1 set, skipping dependency audit gate (CI will still enforce it)"
+else
+    if ! cargo audit --version >/dev/null 2>&1; then
+        info "cargo-audit not installed locally, installing once..."
+        # Pin to the same version CI installs as a prebuilt binary (see
+        # .github/workflows/ci.yml) for reproducibility. Locally this still
+        # compiles from source via `cargo install`; that's a one-time cost
+        # per machine (this check skips it on subsequent pushes), unlike CI
+        # which re-provisions the runner every run.
+        cargo install cargo-audit --version 0.22.2 --locked
+    fi
+    info "cargo audit (see .cargo/audit.toml for documented/justified ignores)"
+    cargo audit
+fi
+
+info "cargo test --locked"
+cargo test --locked
+
+if [ "${Rove_SKIP_COVERAGE:-0}" = "1" ]; then
+    info "Rove_SKIP_COVERAGE=1 set, skipping coverage gate (CI will still enforce it)"
+else
+    if ! cargo llvm-cov --version >/dev/null 2>&1; then
+        info "cargo-llvm-cov not installed locally, installing once..."
+        # Pin to the same version CI installs as a prebuilt binary (see
+        # .github/workflows/ci.yml) for reproducibility.
+        cargo install cargo-llvm-cov --version 0.8.7 --locked
+    fi
+    info "cargo llvm-cov --locked --summary-only --fail-under-lines 80"
+    cargo llvm-cov --locked --summary-only --fail-under-lines 80
+fi
+
+info "cargo build --release --locked --bins"
+cargo build --release --locked --bins
+
+info "git diff --check (whitespace) on commits being pushed"
+zero="0000000000000000000000000000000000000000"
+while read -r local_ref local_sha remote_ref remote_sha; do
+    [ "$local_sha" = "$zero" ] && continue
+    if [ "$remote_sha" = "$zero" ]; then
+        # New branch/ref on the remote: nothing to diff against yet, skip.
+        continue
+    fi
+    git diff --check "$remote_sha..$local_sha"
+done
+
+info "all local CI gates passed"

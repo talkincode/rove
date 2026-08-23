@@ -1,0 +1,263 @@
+# rove-addrbook 构建清单（见 docs/addrbook-format.md）
+#
+# 用法：
+#   scripts/addrbook-refresh.sh                            # 刷新全部上游（含 tarball/Azure 特殊源）
+#   rove-abctl fetch --manifest addrbook/book.toml          # 仅刷新声明了 url 的直链源
+#   rove-abctl build --manifest addrbook/book.toml \
+#       --out addrbook/book.rab --epoch <发布序号>
+#
+# epoch 是单调递增的 u64 发布序号（这里用 YYYYMMDDNN），由发布方维护，
+# 绝不隐式取构建机墙钟。
+epoch = 2026073101
+
+# ══════════════ 本地维护的自定义数据 ══════════════
+
+[[source]]
+category = "corp"
+kind = "cidrs"
+path = "data/corp.cidrs"
+
+[[source]]
+category = "ads"
+kind = "domains"
+path = "data/ads.domains"
+
+# ══════════════ 公有云官方 IP 段 ══════════════
+# fetch 只下载声明 url 的源；build 离线只读本地文件。
+
+# AWS 全量段，自动派生 aws/<service>（ec2、s3、cloudfront…）
+[[source]]
+category = "aws"
+kind = "aws-ip-ranges"
+path = "data/upstream/aws-ip-ranges.json"
+url = "https://ip-ranges.amazonaws.com/ip-ranges.json"
+
+# Azure Service Tags，自动派生 azure/<systemService>。
+# 注意：download.microsoft.com 链接每周轮换，无稳定直链，
+# 由 scripts/addrbook-refresh.sh 从发布页解析后下载，故不写 url。
+[[source]]
+category = "azure"
+kind = "azure-service-tags"
+path = "data/upstream/azure-service-tags.json"
+
+# GCP 客户可用段（cloud.json），派生 gcp/<service>
+[[source]]
+category = "gcp"
+kind = "gcp-cloud-json"
+path = "data/upstream/gcp-cloud.json"
+url = "https://www.gstatic.com/ipranges/cloud.json"
+
+# Google 自有基础设施全量段（goog.json，含 8.8.8.8 等）
+[[source]]
+category = "google-infra"
+kind = "gcp-cloud-json"
+path = "data/upstream/goog.json"
+url = "https://www.gstatic.com/ipranges/goog.json"
+
+# ══════════════ 其他官方发布的 CIDR 列表 ══════════════
+
+[[source]]
+category = "cloudflare"
+kind = "cidrs"
+path = "data/upstream/cloudflare-v4.cidrs"
+url = "https://www.cloudflare.com/ips-v4"
+
+[[source]]
+category = "cloudflare"
+kind = "cidrs"
+path = "data/upstream/cloudflare-v6.cidrs"
+url = "https://www.cloudflare.com/ips-v6"
+
+# Telegram 官方数据中心段
+[[source]]
+category = "telegram-ip"
+kind = "cidrs"
+path = "data/upstream/telegram.cidrs"
+url = "https://core.telegram.org/resources/cidr.txt"
+
+# ══════════════ v2fly domain-list-community 域名表 ══════════════
+# data/upstream/v2fly-community/ 是完整 data 目录（scripts/addrbook-refresh.sh
+# 从 GitHub tarball 展开），include: / &affiliation 在目录内解析，
+# 因此可以直接引用带依赖的大表。
+
+# --- 大厂 / 平台 ---
+[[source]]
+category = "geosite/google"
+kind = "v2fly-domains"
+path = "data/upstream/v2fly-community/google"
+
+[[source]]
+category = "geosite/youtube"
+kind = "v2fly-domains"
+path = "data/upstream/v2fly-community/youtube"
+
+[[source]]
+category = "geosite/apple"
+kind = "v2fly-domains"
+path = "data/upstream/v2fly-community/apple"
+
+[[source]]
+category = "geosite/microsoft"
+kind = "v2fly-domains"
+path = "data/upstream/v2fly-community/microsoft"
+
+[[source]]
+category = "geosite/meta"
+kind = "v2fly-domains"
+path = "data/upstream/v2fly-community/meta"
+
+[[source]]
+category = "geosite/amazon"
+kind = "v2fly-domains"
+path = "data/upstream/v2fly-community/amazon"
+
+[[source]]
+category = "geosite/akamai"
+kind = "v2fly-domains"
+path = "data/upstream/v2fly-community/akamai"
+
+# --- 社交 ---
+[[source]]
+category = "geosite/twitter"
+kind = "v2fly-domains"
+path = "data/upstream/v2fly-community/twitter"
+
+# x 包含 twitter + xai（include）
+[[source]]
+category = "geosite/x"
+kind = "v2fly-domains"
+path = "data/upstream/v2fly-community/x"
+
+[[source]]
+category = "geosite/tiktok"
+kind = "v2fly-domains"
+path = "data/upstream/v2fly-community/tiktok"
+
+[[source]]
+category = "geosite/reddit"
+kind = "v2fly-domains"
+path = "data/upstream/v2fly-community/reddit"
+
+[[source]]
+category = "geosite/linkedin"
+kind = "v2fly-domains"
+path = "data/upstream/v2fly-community/linkedin"
+
+[[source]]
+category = "geosite/discord"
+kind = "v2fly-domains"
+path = "data/upstream/v2fly-community/discord"
+
+[[source]]
+category = "geosite/telegram"
+kind = "v2fly-domains"
+path = "data/upstream/v2fly-community/telegram"
+
+# --- 流媒体 / 游戏 ---
+[[source]]
+category = "geosite/netflix"
+kind = "v2fly-domains"
+path = "data/upstream/v2fly-community/netflix"
+
+[[source]]
+category = "geosite/spotify"
+kind = "v2fly-domains"
+path = "data/upstream/v2fly-community/spotify"
+
+[[source]]
+category = "geosite/hulu"
+kind = "v2fly-domains"
+path = "data/upstream/v2fly-community/hulu"
+
+[[source]]
+category = "geosite/disney"
+kind = "v2fly-domains"
+path = "data/upstream/v2fly-community/disney"
+
+[[source]]
+category = "geosite/twitch"
+kind = "v2fly-domains"
+path = "data/upstream/v2fly-community/twitch"
+
+[[source]]
+category = "geosite/steam"
+kind = "v2fly-domains"
+path = "data/upstream/v2fly-community/steam"
+
+# --- 协作 ---
+[[source]]
+category = "geosite/slack"
+kind = "v2fly-domains"
+path = "data/upstream/v2fly-community/slack"
+
+[[source]]
+category = "geosite/zoom"
+kind = "v2fly-domains"
+path = "data/upstream/v2fly-community/zoom"
+
+# --- 开发 / AI ---
+[[source]]
+category = "geosite/github"
+kind = "v2fly-domains"
+path = "data/upstream/v2fly-community/github"
+
+[[source]]
+category = "geosite/openai"
+kind = "v2fly-domains"
+path = "data/upstream/v2fly-community/openai"
+
+[[source]]
+category = "geosite/anthropic"
+kind = "v2fly-domains"
+path = "data/upstream/v2fly-community/anthropic"
+
+[[source]]
+category = "geosite/github-copilot"
+kind = "v2fly-domains"
+path = "data/upstream/v2fly-community/github-copilot"
+
+[[source]]
+category = "geosite/google-gemini"
+kind = "v2fly-domains"
+path = "data/upstream/v2fly-community/google-gemini"
+
+# 境外 AI 合集（含 anthropic / cursor / copilot 等）
+[[source]]
+category = "geosite/category-ai-!cn"
+kind = "v2fly-domains"
+path = "data/upstream/v2fly-community/category-ai-!cn"
+
+# --- 网盘 / 存储 ---
+[[source]]
+category = "geosite/onedrive"
+kind = "v2fly-domains"
+path = "data/upstream/v2fly-community/onedrive"
+
+[[source]]
+category = "geosite/dropbox"
+kind = "v2fly-domains"
+path = "data/upstream/v2fly-community/dropbox"
+
+[[source]]
+category = "geosite/category-netdisk-!cn"
+kind = "v2fly-domains"
+path = "data/upstream/v2fly-community/category-netdisk-!cn"
+
+# --- 地域 / 集合 / 特殊 ---
+# 大陆常见站点全集（geolocation-cn，含大量 include）
+[[source]]
+category = "geosite/cn"
+kind = "v2fly-domains"
+path = "data/upstream/v2fly-community/geolocation-cn"
+
+# 广告域名全集
+[[source]]
+category = "geosite/category-ads-all"
+kind = "v2fly-domains"
+path = "data/upstream/v2fly-community/category-ads-all"
+
+# 内网 / 保留域名
+[[source]]
+category = "geosite/private"
+kind = "v2fly-domains"
+path = "data/upstream/v2fly-community/private"

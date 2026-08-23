@@ -1,0 +1,230 @@
+{
+  "schema_version": 4,
+  "version": 3,
+  "users": {
+    "bench-direct": {
+      "password": "bench",
+      "policy": "direct",
+      "up_rate": 0,
+      "down_rate": 0,
+      "max_connections": 0
+    },
+    "bench-https": {
+      "password": "bench",
+      "policy": "via-https-hop",
+      "up_rate": 0,
+      "down_rate": 0,
+      "max_connections": 0
+    },
+    "bench-socks5": {
+      "password": "bench",
+      "policy": "via-socks5-hop",
+      "up_rate": 0,
+      "down_rate": 0,
+      "max_connections": 0
+    },
+    "bench-socks5tls": {
+      "password": "bench",
+      "policy": "via-socks5tls-hop",
+      "up_rate": 0,
+      "down_rate": 0,
+      "max_connections": 0
+    },
+    "bench-reverse": {
+      "password": "bench",
+      "policy": "via-reverse-hop",
+      "up_rate": 0,
+      "down_rate": 0,
+      "max_connections": 0
+    },
+    "bench-tuic": {
+      "password": "bench",
+      "policy": "direct",
+      "up_rate": 0,
+      "down_rate": 0,
+      "max_connections": 0,
+      "frontends": {
+        "tuic": {
+          "uuid": "01010101-0101-0101-0101-010101010101",
+          "password": "tuic-bench"
+        }
+      }
+    },
+    "bench-limited": {
+      "password": "bench",
+      "policy": "direct",
+      "up_rate": 1048576,
+      "down_rate": 1048576,
+      "max_connections": 2
+    },
+    "blocked": {
+      "password": "bench",
+      "policy": "blocked",
+      "up_rate": 0,
+      "down_rate": 0,
+      "max_connections": 0
+    },
+    "bench-chain": {
+      "password": "bench",
+      "policy": "via-chain",
+      "up_rate": 0,
+      "down_rate": 0,
+      "max_connections": 0
+    },
+    "bench-chain-failover": {
+      "password": "bench",
+      "policy": "via-chain-failover",
+      "up_rate": 0,
+      "down_rate": 0,
+      "max_connections": 0
+    }
+  },
+  "routing_policies": {
+    "direct": {
+      "routes": []
+    },
+    "via-https-hop": {
+      "routes": [
+        {
+          "selectors": ["host.docker.internal"],
+          "action": {"type": "egress", "egress": "https-hop"}
+        }
+      ]
+    },
+    "via-socks5-hop": {
+      "routes": [
+        {
+          "selectors": ["host.docker.internal"],
+          "action": {"type": "egress", "egress": "socks5-hop"}
+        }
+      ]
+    },
+    "via-socks5tls-hop": {
+      "routes": [
+        {
+          "selectors": ["host.docker.internal"],
+          "action": {"type": "egress", "egress": "socks5tls-hop"}
+        }
+      ]
+    },
+    "via-reverse-hop": {
+      "routes": [
+        {
+          "selectors": ["host.docker.internal"],
+          "action": {"type": "egress", "egress": "reverse-hop"}
+        }
+      ]
+    },
+    "blocked": {
+      "routes": [
+        {
+          "selectors": ["host.docker.internal"],
+          "action": {"type": "block"}
+        }
+      ]
+    },
+    "via-chain": {
+      "routes": [
+        {
+          "selectors": ["host.docker.internal"],
+          "action": {"type": "egress", "egress": "bench-pop"}
+        }
+      ]
+    },
+    "via-chain-failover": {
+      "routes": [
+        {
+          "selectors": ["host.docker.internal"],
+          "action": {"type": "egress", "egress": "bench-pop-failover"}
+        }
+      ]
+    }
+  },
+  "egresses": {
+    "https-hop": {
+      "type": "upstream",
+      "backend": {
+        "kind": "https",
+        "addr": "hop-https.local:8443",
+        "username": "rove",
+        "password": "rove",
+        "tls": true
+      }
+    },
+    "socks5-hop": {
+      "type": "upstream",
+      "backend": {
+        "kind": "socks5",
+        "addr": "hop-socks5:1080",
+        "username": "rove",
+        "password": "rove",
+        "tls": false
+      }
+    },
+    "socks5tls-hop": {
+      "type": "upstream",
+      "backend": {
+        "kind": "socks5",
+        "addr": "hop-socks5tls.local:1081",
+        "username": "rove",
+        "password": "rove",
+        "tls": true
+      }
+    },
+    "reverse-hop": {
+      "type": "upstream",
+      "backend": {
+        "kind": "reverse",
+        "addr": "local-reverse-hop"
+      }
+    },
+    "bench-pop": {
+      "type": "chain",
+      "members": [
+        {
+          "id": "pop-reverse-1",
+          "priority": 1,
+          "backend": {
+            "kind": "reverse",
+            "addr": "local-reverse-hop"
+          }
+        },
+        {
+          "id": "pop-socks5-2",
+          "priority": 2,
+          "backend": {
+            "kind": "socks5",
+            "addr": "hop-socks5:1080",
+            "username": "rove",
+            "password": "rove",
+            "tls": false
+          }
+        }
+      ]
+    },
+    "bench-pop-failover": {
+      "type": "chain",
+      "members": [
+        {
+          "id": "pop-missing-1",
+          "priority": 1,
+          "backend": {
+            "kind": "reverse",
+            "addr": "missing-reverse-hop"
+          }
+        },
+        {
+          "id": "pop-socks5-2",
+          "priority": 2,
+          "backend": {
+            "kind": "socks5",
+            "addr": "hop-socks5:1080",
+            "username": "rove",
+            "password": "rove",
+            "tls": false
+          }
+        }
+      ]
+    }
+  }
+}

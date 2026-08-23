@@ -1,0 +1,25 @@
+{
+  "schema_version": 4,
+  "version": 7,
+  "egresses": {
+    "egress-a": {
+      "type": "upstream",
+      "backend": { "kind": "http", "addr": "proxy-a.example:8443" }
+    }
+  },
+  "routing_policies": {
+    "book-policy": {
+      "routes": [
+        { "selectors": ["book:blocked"], "action": { "type": "block" } },
+        { "selectors": ["book:viaproxy"], "action": { "type": "egress", "egress": "egress-a" } }
+      ]
+    }
+  },
+  "users": {
+    "frank": {
+      "password": "frank-login-secret",
+      "policy": "book-policy"
+    }
+  },
+  "node_overrides": {}
+}

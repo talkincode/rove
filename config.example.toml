@@ -1,0 +1,277 @@
+# Rove (application network optimizer) — 单体代理配置（对比 GOST 一大堆 services/chains/hops，这里只有节点身份 + 监听 + 控制面）
+
+node_id = "edge-tokyo-01"
+
+# 控制面：用户与策略的唯一真相来源。节点只拉取编译好的快照。
+# snapshot_url 是完整地址，节点原样请求（只会追加 ?since= 或 &since=），
+# 不会拼接任何固定路径，填控制面实际暴露的那个地址即可。
+[control_plane]
+snapshot_url = "https://control.example.com/snapshot"
+token = "REPLACE_WITH_NODE_TOKEN"
+poll_interval_secs = 30
+cache_path = "./data/snapshot.json"   # 离线缓存，启动先读它
+
+# 编排探针（默认关闭、默认仅回环监听）。/healthz 始终反映进程存活；
+# /readyz 仅在已加载快照、未进入排空且控制面未持续失败时返回 200。
+[health]
+enable = false
+listen = "127.0.0.1:9090"
+control_plane_unreachable_secs = 90
+
+# SIGINT/SIGTERM 后立即停止接入新连接，并给在途连接一个有界排空窗口。
+[shutdown]
+grace_period_secs = 30
+
+# 前端接入监听。protocol = http | socks5 ；tls 段存在即升级为 https / socks5tls。
+# http 同时支持 HTTPS 的 CONNECT 隧道与明文 HTTP 的 absolute-form 转发。
+[[listeners]]
+name = "https-in"
+protocol = "http"
+listen = "0.0.0.0:8443"
+[listeners.tls]
+cert = "./certs/server.crt"
+key  = "./certs/server.key"
+# 可选：同一 IP:port 按 TLS ClientHello SNI 选择额外证书。
+# 未发送 SNI 或名称未命中时仍使用上面的默认证书。
+# [[listeners.tls.certificates]]
+# server_names = ["proxy.example.net"]
+# cert = "./certs/proxy.example.net.crt"
+# key  = "./certs/proxy.example.net.key"
+
+[[listeners]]
+name = "http-in"
+protocol = "http"
+listen = "0.0.0.0:8080"
+# 可选：观察隧道首包中的 TLS SNI / HTTP Host。
+# observe = 只记日志，不改策略/拨号；route = 先确认隧道再按嗅探域名选 hop / 阻断。
+# [listeners.sniff]
+# enabled = true
+# mode = "route"
+# max_bytes = 16384
+# timeout_ms = 500
+
+[[listeners]]
+name = "socks5-in"
+protocol = "socks5"
+listen = "0.0.0.0:1080"
+
+[[listeners]]
+name = "socks5tls-in"
+protocol = "socks5"
+listen = "0.0.0.0:1081"
+[listeners.tls]
+cert = "./certs/server.crt"
+key  = "./certs/server.key"
+
+# TUIC v5 front-end (QUIC/UDP). Optional and independent of [[listeners]] above.
+# Auth uses per-user tuic_uuid + tuic_password from the control-plane snapshot
+# (never the login password). TCP `Connect` reuses the normal egress and is
+# rate-limited per user; UDP `Packet` (native datagram mode) is relayed onto the
+# reverse-hop UDP egress, so it needs a group whose upstream is a `reverse` hop.
+# [[tuic_listeners]]
+# name   = "tuic-in"
+# listen = "0.0.0.0:8443"        # UDP ip:port for the QUIC endpoint
+# cert   = "./certs/server.crt"
+# key    = "./certs/server.key"
+# alpn   = ["h3"]                # must match the client's configured ALPN
+# initial_mtu = 1332             # 可选：固定 QUIC 路径 MTU（UDP 载荷字节，范围 1200-1500）。
+#                                # 仅当本监听跑在已压缩/固定 MTU 的外层隧道里才需要设，
+#                                # 取值 ≈ 隧道路径MTU − 28(IPv4) 或 −48(IPv6)。不设则走默认 PMTUD。
+# [tuic_listeners.sniff]
+# enabled = true                 # 只处理 TUIC TCP Connect；不检查 UDP Packet
+# mode = "route"                 # observe | route；route 可按嗅探域名选出口/阻断
+# max_bytes = 16384
+# timeout_ms = 500
+
+[log]
+level = "info"   # error|warn|info|debug|trace
+
+# 结构化访问日志（默认开启）：每条完成的连接一行 JSON，无论成功/失败，
+# 独立于 log.level 和 MQTT，是排查“某用户/某目标连不上”故障时 grep 的对象。
+# 字段：timestamp/node_id/listener/protocol/username/target_host/target_port/
+#      requested_host/requested_port/sniffed_host/sniff_protocol/sniff_outcome/
+#      effective_policy_host/decision/result/failure_stage/message/
+#      snapshot_version/duration_ms/bytes_up/bytes_down。永不包含密码等凭据。
+[access_log]
+enable = true            # 关闭后完全不产生访问日志（不建议在生产关闭）
+dir = "./logs"            # 按天轮转，文件名形如 access.2026-07-01
+file_prefix = "access"
+retention_days = 7        # 按文件名日期清理，与 mtime 无关
+channel_capacity = 8192   # 写入队列容量；打满则丢弃并计数，绝不阻塞代理热路径
+
+# 可选：把访问日志同时转发到远程 syslog（默认关闭）。
+# 手搓的最小 RFC 3164（<pri>timestamp node_id tag: message），message 部分
+# 就是同一条 JSON，方便下游继续按字段检索。TCP 使用 RFC 6587 octet-counting
+# 分帧；UDP 是 fire-and-forget。转发失败只记警告，不影响本地文件写入。
+[access_log.syslog]
+enable = false
+address = "syslog.example.com:514"
+protocol = "udp"    # udp | tcp
+facility = "local0"
+tag = "rove"
+
+# MQTT 异步运维通道（默认关闭）。
+# 用于网络隔离场景下的用户策略查询、同步指令和后续拨测追踪命令。
+[mqtt]
+enable = false
+broker = "tcp://mqtt.example.com:1883" # 或 ssl://mqtt.example.com:8883
+client_id = ""                         # 留空时使用 rove-<node_id>
+username = ""
+password = ""
+qos = 1
+reply_topic_prefix = "rove/replies/"
+
+[mqtt.topics]
+user_query = "rove/user/query"
+sync_command = "rove/sync/command"
+node_status = "rove/node/status"
+probe_trace = "rove/probe/trace"
+diagnostics_command = "rove/diagnostics/command"
+
+# 可选：诊断事件会话（默认关闭，仅在收到命令后临时开启，不落盘）。
+# 这里配置的是安全上限（爆炸半径），不是开关。
+[mqtt.diagnostics]
+default_ttl_secs = 30       # 未显式指定时的会话存活时间
+max_ttl_secs = 300          # 单个会话允许的最大存活时间
+max_sessions = 16           # 全局并发会话上限
+max_sessions_per_user = 2   # 单个用户并发会话上限
+channel_capacity = 256      # 事件发布缓冲；满时丢弃并计数，绝不阻塞代理热路径
+
+[mqtt.tls]
+enable = false
+
+# 内置只读 SNMP agent（默认关闭），供 Cacti / LibreNMS 等标准 NMS 轮询
+# 每个 listener 与每个出口（egress）维度的流量计数器。
+# 只实现 GET / GETNEXT / GETBULK；SET / TRAP / INFORM 永不支持。
+# MIB 结构与 Cacti 接入步骤见 docs/snmp-cacti.md。
+[snmp]
+enable = false
+listen = "0.0.0.0:161"       # UDP 监听地址；<1024 端口需要相应权限
+community = ""               # SNMPv2c community；留空则 v2c 关闭（可只用 v3）
+allow_cidrs = ["127.0.0.1/32", "::1/128"]  # 来源白名单，白名单外的包直接丢弃
+state_path = "./data/snmp-state.json"      # SNMPv3 engineBoots 持久化文件
+
+# SNMPv3 USM 用户（可配多个）。仅在配置了 v3 用户时才会写 state_path。
+# 安全策略 fail-closed：用户必须有认证口令；配置了加密口令的用户
+# 只接受 authPriv 级别的请求。auth_protocol: "sha1" | "sha256"；
+# priv_protocol: "aes128"（留空表示该用户不加密）。MD5 / DES 永不支持。
+# [[snmp.v3_users]]
+# username = "cacti"
+# auth_protocol = "sha256"
+# auth_password = "change-me-auth"
+# priv_protocol = "aes128"
+# priv_password = "change-me-priv"
+
+# 反向 hop 数据面（默认关闭）。用于 hop 节点位于 NAT / 防火墙 / 私有网络后、
+# edge 无法主动拨号 hop 地址的拓扑：改为 hop 主动用 QUIC 拨到 edge 并注册，
+# edge 为每个用户连接在该 QUIC 连接上开一条独立双向流（一条流一个隧道）。
+# 快照里把出口写成 kind = "reverse"、addr = "<hop_id>"；当前 edge 若没有该
+# hop_id 的已认证会话，请求直接 fail-closed，绝不回落直连。详见
+# docs/reverse-hop.md。
+[reverse_hop]
+enable = false
+listen = "0.0.0.0:9443"      # QUIC 监听的 UDP 地址（注意放行 UDP，不是 TCP）
+cert = "./certs/server.crt"  # QUIC 强制 TLS 1.3，edge 需要证书/私钥
+key  = "./certs/server.key"
+# 注册令牌（部署方自有，请用占位符，勿提交真实密钥）。可配多个，
+# 让不同 hop 各带各的令牌；启用时至少要有一个非空令牌。
+tokens = ["REPLACE_WITH_REVERSE_HOP_TOKEN"]
+duplicate = "reject"         # 同一 hop_id 重复注册策略：reject（默认）| replace
+max_streams_per_hop = 256    # 单个 hop 会话的并发隧道上限（也是 QUIC 双向流上限）
+open_timeout_secs = 10       # 等待 hop 接受隧道 CONNECT 的超时；超时按 reverse_open fail-closed
+# initial_mtu = 1332         # 可选：固定 edge 侧 QUIC 路径 MTU（UDP 载荷字节，范围 1200-1500）。
+                             # 仅当 edge 跑在已压缩/固定 MTU 的外层隧道里才需要；不设则走默认 PMTUD。
+                             # hop 客户端侧对应用 rove-hop 的 --reverse-initial-mtu 设置。
+
+# NAT 后接入点的反向公网入口。可重复配置多个 [[reverse_ingress]]，每个
+# connector 独立拨一个 rove-relay、独立认证和重连。公网 relay 只做 L4
+# 字节/datagram 透传；用户 TLS 证书和私钥仍留在本 Rove 节点。
+# 令牌优先通过环境变量提供，避免写进配置文件。
+# [[reverse_ingress]]
+# enable = true
+# relay = "relay.example.com:9444"      # rove-relay 的 QUIC/UDP 控制地址
+# server_name = "relay.example.com"     # relay 隧道证书的 SNI/校验名
+# token_env = "Rove_INGRESS_RELAY_TOKEN"
+# skip_cert_verify = false
+# initial_mtu = 1452                    # Quinn UDP payload；公网 L3 MTU 1500 的 IPv6 安全值
+# max_streams = 1024
+# max_udp_flows = 4096
+# reconnect_min_secs = 1
+# reconnect_max_secs = 30
+#
+# [[reverse_ingress.listeners]]
+# id = "https-public"                   # 必须在 relay 授权表中存在
+# transport = "tcp"
+# public_port = 443                     # 0 = 从 relay 授权端口池动态分配
+# local_listener = "https-in"           # 只能引用本文件已声明的 listener 名
+#
+# [[reverse_ingress.listeners]]
+# id = "tuic-public"
+# transport = "udp"
+# public_port = 8443
+# local_listener = "tuic-in"
+# max_inner_datagram = 1200             # 超限明确丢弃，不切换到可靠 stream
+
+# 内嵌 Subnetra 组网底座（默认关闭）。让 Rove 原生实现 Subnetra v1 线格协议，
+# 无需单独部署 subnetra 守护进程、无需 TUN / NET_ADMIN：全用户态 IP 栈在 overlay
+# 上终结 TCP，直接喂给 Rove 的 HTTP/SOCKS 处理。与现有 Zig 版 subnetra 完全线兼容
+# （由 tests/subnetra_conformance.rs 的 KAT 向量机械保证）。hub 与 spoke 共用同一份
+# 数据面，仅 mode 不同。混淆(obfuscate)必须全网一致，否则 fail-closed 互不通。
+#
+# hub 角色：在 overlay_ip:proxy_port 上接受各 spoke 的连接，充当隧道内的代理入口。
+# spoke 角色：主动拨到 hub，把代理流量从 overlay 打进隔离网段（egress 出口）。
+#
+# [subnetra]
+# enable = true
+# mode = "hub"                 # "hub"（收 spoke、代理入口）| "spoke"（拨 hub、egress）
+# local_id = 1                 # 本节点 mesh id，0 < id <= 65535，充当线上 key_id 选择器
+# listen = "0.0.0.0:18020"     # 数据面 UDP 绑定地址（放行 UDP）
+# overlay_cidr = "10.0.0.1/24" # 本节点 overlay 地址：主机位是自身 inner IP，前缀是虚拟子网
+# obfuscate = true             # 头部混淆（§3.4），默认开；必须全网一致
+# keepalive_secs = 25          # spoke NAT 保活间隔（秒），hub 忽略
+# mtu = 1360                   # 可选：内层 overlay MTU（字节），范围 [576, 1452]，默认 1452。
+#                              # 当整张 mesh 跑在已被压缩、路径固定的外层隧道里（例如载体只有
+#                              # 1360）时调小它：smoltcp 会据此下调对端 TCP MSS，密封后的外层 UDP
+#                              # 数据报就能不分片地穿过隧道。留空则用协议上限 1452。
+# proxy_protocol = "http"      # 仅 hub：overlay 上服务的协议 "http" | "socks5"
+# proxy_port = 8080            # 仅 hub：overlay IP 上的代理端口
+# # 每个 peer 一条目录项；psk 每条链路唯一（64 位十六进制 = 32 字节），切勿跨 peer 复用。
+# # allowed_src 既是 §5.7 内源过滤前缀，也是 §5.9 路由键。hub 侧 endpoint 可留空
+# # （从已认证流量学习）；spoke 侧必须填 hub 的可拨地址。
+# [[subnetra.peers]]
+# id = 2
+# psk = "REPLACE_LINK_1_2_64_HEX_CHARS_openssl_rand_hex_32_UNIQUE_PER_LINK"
+# allowed_src = "10.0.0.2/32"
+# endpoint = "203.0.113.2:18020"   # hub 可留空；spoke 必填
+# name = "bj-spoke"
+
+# 专用出口 DNS（默认关闭 → 用操作系统解析器，行为与旧版逐字节一致）。
+# 当宿主机的 /etc/resolv.conf 指向被污染/分裂视图的解析器，但网络里另有一台
+# 干净（防污染）DNS 时，把 servers 填上：Rove 的所有出口域名解析（直连 Direct、
+# 上游代理 dial、reverse UDP、edge 拨号）都会改走这些服务器，不再读宿主机配置。
+# servers 为空或整段缺省 → 无操作，继续用系统解析器。
+# [dns]
+# servers = ["10.0.0.53", "10.0.0.54:5353"]  # ip 或 ip:port；默认端口随传输：udp/tcp=53、tls=853、https=443
+# protocol = "udp"        # 传输：udp（默认）| tcp | tls/dot（DNS-over-TLS）| https/doh（DNS-over-HTTPS）
+# timeout_ms = 2000       # 单次查询超时（毫秒）
+# attempts = 2            # 每台服务器的重试次数
+# ipv4_first = true       # 优先 IPv4（先查 A 再查 AAAA）；多数边缘出口是 IPv4-first
+# cache_size = 64         # 内存answer缓存条数；0 关闭缓存
+#
+# 加密 DNS（DoT/DoH）——真正抗链路投毒/篡改，推荐用于跨不可信链路访问防污染服务器：
+# protocol = "tls"                    # 或 "https"
+# tls_server_name = "dns.example.com" # 必填：SNI + 证书校验名（IP-SAN 证书就填 IP）
+# doh_path = "/dns-query"             # 仅 DoH，默认 /dns-query
+# tls_ca = "/etc/rove/dns-ca.pem"      # 私有 CA（自建防污染服务器）；留空=Mozilla 公共根 + Rove_EXTRA_CA_CERTS
+# tls_insecure = false                # 跳过证书校验（自签名）——危险，会抵消 DoT/DoH 的防篡改意义
+
+# rove-addrbook：版本化地址数据集（.rab 工件，规范见 docs/addrbook-format.md）。
+# 由 rove-abctl 从公开数据（AWS/Azure/GCP 地址段、v2fly 域名表等）离线构建发布，
+# 控制面快照规则用 "book:<category>" 引用其中的层级分类（如 book:google/ads）。
+# 含 book: 规则的快照必须声明 schema_version = 3；旧 schema 会整份拒绝。
+# 注意 fail-closed 语义：配置了本段但文件加载失败 → 拒绝启动；
+# 快照规则引用了未知分类或未配置本段 → 拒绝整个快照；
+# 运行期换入损坏文件 → 保留旧地址簿继续服务并告警。
+# [addrbook]
+# path = "/etc/rove/book.rab"   # rove-abctl build 产出的工件路径
+# poll_interval_secs = 300     # 文件变更轮询间隔（热重载）；0 = 仅重启时加载

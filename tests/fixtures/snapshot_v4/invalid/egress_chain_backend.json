@@ -1,0 +1,12 @@
+{
+  "schema_version": 4,
+  "version": 1,
+  "egresses": {
+    "e": {
+      "type": "upstream",
+      "backend": { "kind": "chain", "addr": "unused" }
+    }
+  },
+  "routing_policies": { "p": { "routes": [] } },
+  "users": { "u": { "password": "x", "policy": "p" } }
+}

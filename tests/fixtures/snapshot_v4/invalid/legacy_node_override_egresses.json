@@ -1,0 +1,13 @@
+{
+  "schema_version": 2,
+  "version": 1,
+  "users": { "u": { "password": "x", "group": "g" } },
+  "groups": { "g": { "proxy": [], "block": [] } },
+  "node_overrides": {
+    "edge-1": {
+      "egresses": {
+        "e": { "type": "upstream", "backend": { "kind": "http", "addr": "p.example:8443" } }
+      }
+    }
+  }
+}

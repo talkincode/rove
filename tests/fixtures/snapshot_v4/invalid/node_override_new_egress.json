@@ -1,0 +1,19 @@
+{
+  "schema_version": 4,
+  "version": 1,
+  "egresses": {
+    "e": { "type": "upstream", "backend": { "kind": "http", "addr": "p.example:8443" } }
+  },
+  "routing_policies": { "p": { "routes": [], "default_egress": "e" } },
+  "users": { "u": { "password": "x", "policy": "p" } },
+  "node_overrides": {
+    "edge-1": {
+      "egresses": {
+        "node-only": {
+          "type": "upstream",
+          "backend": { "kind": "http", "addr": "node.example:8443" }
+        }
+      }
+    }
+  }
+}

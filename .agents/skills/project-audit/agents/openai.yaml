@@ -1,0 +1,4 @@
+interface:
+  display_name: "Project Audit"
+  short_description: "Repo-wide evidence-based audit reports"
+  default_prompt: "Use $project-audit to run a read-only whole-project audit and write a scored Markdown report."

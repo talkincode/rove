@@ -1,0 +1,73 @@
+# cargo-audit configuration for Rove.
+#
+# Run locally with: cargo audit
+# Enforced in `.githooks/pre-push` and `.github/workflows/ci.yml`.
+#
+# Any NEW advisory not listed below will fail the audit. Only add an entry
+# here after verifying (not assuming) that the vulnerable code path is
+# unreachable from Rove's actual usage, and document the evidence.
+
+[advisories]
+ignore = [
+    # RUSTSEC-2026-0104 / GHSA-82j2-j2ch-gfr8 (HIGH)
+    # "rustls-webpki: Denial of service via panic on malformed CRL BIT STRING"
+    # Fixed upstream in rustls-webpki >= 0.103.13.
+    #
+    # RUSTSEC-2026-0049 / GHSA-pwjx-qhcg-rvj4 (MODERATE)
+    # "CRLs not considered authoritative by Distribution Point due to faulty
+    # matching logic". Fixed upstream in rustls-webpki >= 0.103.10.
+    #
+    # RUSTSEC-2026-0098 / GHSA-965h-392x-2mh5 (LOW) and
+    # RUSTSEC-2026-0099 / GHSA-xgp8-3hg3-c2mh (LOW)
+    # Name-constraint handling bugs, reachable only after certificate
+    # signature verification and only against a misissuing CA.
+    # Fixed upstream in rustls-webpki >= 0.103.12.
+    #
+    # Root cause: `rumqttc 0.25.1` (our only MQTT client dependency) pins its
+    # OWN direct dependency on `rustls-webpki = "^0.102.8"`
+    # (see rumqttc/Cargo.toml `[dependencies.rustls-webpki]`), which
+    # Cargo resolves as a *second*, separate copy alongside the patched
+    # `rustls-webpki 0.103.13` that the rest of the tree (our own `rustls`/
+    # `tokio-rustls`/`reqwest`) already uses. rumqttc 0.25.1 is the newest
+    # release on crates.io (verified via crates.io API and upstream GitHub
+    # history), so there is no version bump that removes this pin; the
+    # `rustls-webpki` dependency edge is required at compile time by
+    # rumqttc's `use-rustls-no-provider` Cargo feature, which cannot be
+    # split further because Rove needs that feature for MQTT broker
+    # TLS support (`ssl://`/`tls://`/`mqtts://` schemes, see src/mqtt.rs).
+    #
+    # Why it is not exploitable here (verified, not assumed):
+    #   - All four advisories only affect certificate *revocation* checking
+    #     (CRLs) or name-constraint edge cases reached only after a CA has
+    #     misissued a certificate.
+    #   - `rg -n 'RevocationOptions|CertRevocationList|crl' src/` returns
+    #     zero matches: Rove never configures CRL-based revocation
+    #     checking anywhere in its own TLS code.
+    #   - rumqttc's own `src/tls.rs` `rustls_connector()` never configures
+    #     `RevocationOptions` either; the only reference to the `webpki`
+    #     crate in rumqttc is a dead `Error::WebPki(#[from] webpki::Error)`
+    #     enum variant that no code path in that file ever constructs (all
+    #     fallible calls in `rustls_connector()` return `rustls::Error`, not
+    #     `webpki::Error`).
+    #   - Rove's MQTT client only connects outbound to an
+    #     operator-configured broker (see docs/mqtt-integration.md); it does
+    #     not accept inbound TLS from untrusted parties via this dependency.
+    #
+    # Action if this changes: re-run this analysis if MQTT TLS client-auth
+    # or CRL checking is ever added, and drop these ignores as soon as
+    # rumqttc publishes a release that relaxes its `rustls-webpki` pin.
+    # `.github/dependabot.yml` watches rumqttc (weekly) and opens a PR the
+    # moment a new release exists, so this acceptance cannot silently rot.
+    "RUSTSEC-2026-0104",
+    "RUSTSEC-2026-0049",
+    "RUSTSEC-2026-0098",
+    "RUSTSEC-2026-0099",
+    # RUSTSEC-2025-0134 (unmaintained WARNING, not a vulnerability)
+    # "rustls-pemfile is unmaintained". Rove's own PEM parsing migrated to
+    # the maintained `rustls-pki-types` pem API (src/tls.rs, tests,
+    # examples); the only remaining edge is rumqttc 0.25.1's internal
+    # dependency (`cargo tree -i rustls-pemfile` shows rumqttc as sole
+    # parent). It leaves the tree with the same rumqttc release bump the
+    # entries above wait for.
+    "RUSTSEC-2025-0134",
+]

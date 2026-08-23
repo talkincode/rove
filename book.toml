@@ -1,0 +1,32 @@
+[book]
+title = "Rove 文档"
+description = "Rove —— 应用网络优化器。为 Agent API、投资交易和其他对路径敏感的应用流量做接入、分流与限速。使用指南、最佳实践与常见问答。"
+authors = ["talkincode"]
+language = "zh-CN"
+src = "docs"
+
+[build]
+build-dir = "book"
+create-missing = false
+
+[output.html]
+default-theme = "light"
+preferred-dark-theme = "navy"
+site-url = "/rove/"
+git-repository-url = "https://github.com/talkincode/rove"
+edit-url-template = "https://github.com/talkincode/rove/edit/main/{path}"
+no-section-label = false
+additional-js = ["mermaid.min.js", "mermaid-init.js"]
+
+[output.html.fold]
+enable = true
+level = 1
+
+[output.html.search]
+enable = true
+limit-results = 20
+use-boolean-and = true
+boost-title = 2
+
+[preprocessor.mermaid]
+command = "mdbook-mermaid"

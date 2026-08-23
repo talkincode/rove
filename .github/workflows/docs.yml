@@ -1,0 +1,106 @@
+name: Docs
+
+# 构建 mdBook 文档站点并部署到 GitHub Pages。
+# 首次使用需在仓库 Settings → Pages 里把 "Source" 设为 "GitHub Actions"。
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "deploy/routeros-hop/**"
+      - "scripts/pack-routeros-hop.sh"
+      - "book.toml"
+      - ".github/workflows/docs.yml"
+  pull_request:
+    paths:
+      - "docs/**"
+      - "deploy/routeros-hop/**"
+      - "scripts/pack-routeros-hop.sh"
+      - "book.toml"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  MDBOOK_VERSION: 0.5.3
+  MDBOOK_MERMAID_VERSION: 0.17.0
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build book
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install mdBook
+        uses: taiki-e/install-action@v2
+        with:
+          tool: mdbook@${{ env.MDBOOK_VERSION }},mdbook-mermaid@${{ env.MDBOOK_MERMAID_VERSION }}
+
+      - name: Build offline RouterOS hop docs bundle
+        run: |
+          set -euo pipefail
+          # Pages 提供「可下载文档包」：手册 + 命名规范 + ROS 脚本（不含重量级镜像）。
+          # 完整带镜像的部署包见 GitHub Release: rove-hop-routeros-*.tar.gz
+          mkdir -p docs/downloads
+          STAGE="$(mktemp -d)"
+          mkdir -p "$STAGE/rove-hop-routeros-docs"
+          cp -a deploy/routeros-hop/. "$STAGE/rove-hop-routeros-docs/"
+          # drop empty images placeholder noise if any
+          rm -rf "$STAGE/rove-hop-routeros-docs/images" 2>/dev/null || true
+          printf '%s\n' \
+            'This zip is the docs-site offline bundle (GUIDE + naming + RouterOS .rsc scripts).' \
+            'It does NOT include the container image.' \
+            'Full deploy package with images/rove-hop-arm64.tar:' \
+            '  rove-hop-routeros-<version>-arm64.tar.gz' \
+            '  https://github.com/talkincode/rove/releases' \
+            > "$STAGE/rove-hop-routeros-docs/DOWNLOAD-NOTES.txt"
+          (
+            cd "$STAGE"
+            zip -r rove-hop-routeros-bundle.zip rove-hop-routeros-docs
+          )
+          cp "$STAGE/rove-hop-routeros-bundle.zip" docs/downloads/
+          ls -lh docs/downloads/
+
+      - name: Build book
+        run: mdbook build
+
+      - name: Ensure downloads published with book
+        run: |
+          set -euo pipefail
+          mkdir -p book/downloads
+          cp -f docs/downloads/rove-hop-routeros-bundle.zip book/downloads/
+          # mdBook may not copy unrecognized paths; force-publish downloads
+          ls -lh book/downloads/
+
+      - name: Upload Pages artifact
+        # 仅在推送到 main（或手动触发）时上传，供 deploy 作业发布；
+        # PR 只做构建验证，不发布。
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: book
+
+  deploy:
+    name: Deploy to GitHub Pages
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5

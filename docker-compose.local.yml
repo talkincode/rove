@@ -1,0 +1,144 @@
+services:
+  rove:
+    image: rove:local-debug
+    build:
+      context: .
+      dockerfile: docker/local/Dockerfile.debug
+    container_name: rove-local-main
+    depends_on:
+      - relay-ingress
+      - hop-https
+      - hop-socks5
+      - hop-socks5tls
+    environment:
+      Rove_EXTRA_CA_CERTS: /etc/rove/certs/local-rove-ca.crt
+      Rove_INGRESS_RELAY_TOKEN: local-ingress-token
+    volumes:
+      - ./docker/local/rove.toml:/etc/rove/config.toml:ro
+      - ./docker/local/snapshot.json:/var/lib/rove/snapshot.json:ro
+      - ./docker/local/certs:/etc/rove/certs:ro
+    ports:
+      - "18080:8080"
+      - "18443:8443"
+      - "10443:10443/udp"
+      - "19443:9443/udp"
+      - "11080:1080"
+      - "11081:1081"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  relay-ingress:
+    image: rove:local-debug
+    build:
+      context: .
+      dockerfile: docker/local/Dockerfile.debug
+    container_name: rove-local-relay-ingress
+    entrypoint: ["/usr/local/bin/rove-relay"]
+    command: ["--config", "/etc/rove/relay.toml"]
+    environment:
+      Rove_NODE_LOCAL_MAIN_TOKEN: local-ingress-token
+    volumes:
+      - ./docker/local/relay.toml:/etc/rove/relay.toml:ro
+      - ./docker/local/certs:/etc/rove/certs:ro
+    ports:
+      - "38080:8080"
+      - "38443:8443"
+      - "31080:1080"
+      - "31081:1081"
+      - "30443:10443/udp"
+      - "19444:9444/udp"
+    networks:
+      default:
+        aliases:
+          - relay-ingress
+
+  hop-https:
+    image: rove:local-debug
+    build:
+      context: .
+      dockerfile: docker/local/Dockerfile.debug
+    container_name: rove-local-hop-https
+    entrypoint: ["/usr/local/bin/rove-hop"]
+    command:
+      - "--https"
+      - "0.0.0.0:8443"
+      - "--tls-cert"
+      - "/etc/rove/certs/local-rove.crt"
+      - "--tls-key"
+      - "/etc/rove/certs/local-rove.key"
+    volumes:
+      - ./docker/local/certs:/etc/rove/certs:ro
+    ports:
+      - "28443:8443"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      default:
+        aliases:
+          - hop-https.local
+
+  hop-socks5:
+    image: rove:local-debug
+    build:
+      context: .
+      dockerfile: docker/local/Dockerfile.debug
+    container_name: rove-local-hop-socks5
+    entrypoint: ["/usr/local/bin/rove-hop"]
+    command:
+      - "--socks5"
+      - "0.0.0.0:1080"
+    ports:
+      - "21080:1080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  hop-socks5tls:
+    image: rove:local-debug
+    build:
+      context: .
+      dockerfile: docker/local/Dockerfile.debug
+    container_name: rove-local-hop-socks5tls
+    entrypoint: ["/usr/local/bin/rove-hop"]
+    command:
+      - "--socks5tls"
+      - "0.0.0.0:1081"
+      - "--tls-cert"
+      - "/etc/rove/certs/local-rove.crt"
+      - "--tls-key"
+      - "/etc/rove/certs/local-rove.key"
+    volumes:
+      - ./docker/local/certs:/etc/rove/certs:ro
+    ports:
+      - "21081:1081"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      default:
+        aliases:
+          - hop-socks5tls.local
+
+  hop-reverse:
+    image: rove:local-debug
+    build:
+      context: .
+      dockerfile: docker/local/Dockerfile.debug
+    container_name: rove-local-hop-reverse
+    depends_on:
+      - rove
+    entrypoint: ["/usr/local/bin/rove-hop"]
+    environment:
+      Rove_EXTRA_CA_CERTS: /etc/rove/certs/local-rove-ca.crt
+      Rove_HOP_REVERSE_TOKEN: local-reverse-token
+    command:
+      - "--node-id"
+      - "local-reverse-hop"
+      - "--reverse-hop-id"
+      - "local-reverse-hop"
+      - "--reverse-quic"
+      - "rove:9443"
+      - "--reverse-edge-id"
+      - "local-main"
+    volumes:
+      - ./docker/local/certs:/etc/rove/certs:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
