@@ -283,6 +283,23 @@ fail-closed 等语义保持不变。
 - 最大 schema 为 3 的节点拒绝 `schema_version: 4` 并保留此前有效的内存快照和 cache。
   发布顺序必须是先部署 capability 且生产者继续输出 <=3；确认节点能力后再允许生产者输出 4。
 
+#### v4 结构对未知字段 fail closed（设计承诺）
+
+schema v4 的全部 wire 结构（`RawSnapshotV4`、`RawUserV4`、`RawRoutingPolicy`、`RawRoute`、
+`NodeOverrideV4` 及其嵌套 action / egress 结构）都声明了 `deny_unknown_fields`：
+**收到任何不认识的字段，节点拒收整份快照，而不是忽略该字段后按旧语义继续放行。**
+
+这是刻意的安全属性，不是实现细节。它意味着：
+
+- 未来给 policy / route / egress 增加语义字段（例如显式的兜底 action）时，不支持该字段的
+  旧节点会明确拒收，而不会因为「忽略未知字段」把一份收紧过的策略执行成宽松版本。
+- 代价是拒收后节点保留上一份有效快照，因此**收紧类变更必须配合 schema 或 capability 门控
+  发布**：先确认目标节点已支持，再让控制面输出带新字段的快照，否则节点会停留在旧策略上。
+- 控制面发布前用 `rove validate-snapshot` 预检，可以在下发之前就发现字段不被接受。
+
+注意这条只适用于 v4 结构族。v1-v3 的旧结构不带 `deny_unknown_fields`，旧二进制会忽略未知
+字段——那条升级路径的 fail-closed 哨兵是不认识的取值（如 `kind: "chain"`），见下文。
+
 ### 公共 validator
 
 使用节点二进制做发布前预检，不启动 listener、同步器或守护进程：

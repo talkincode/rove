@@ -38,7 +38,9 @@ pub struct Config {
     pub subnetra: Option<crate::subnetra::config::SubnetraConfig>,
     /// Optional dedicated egress DNS. Empty/absent → the OS resolver is used and
     /// behaviour is unchanged. Populate `[dns].servers` to route every egress
-    /// hostname lookup through a specific (e.g. anti-pollution) resolver instead.
+    /// hostname lookup through a specific resolver instead — typically an
+    /// internal/split-horizon resolver, or one whose answers are geographically
+    /// consistent with the egress actually being used.
     #[serde(default)]
     pub dns: DnsConfig,
     /// Optional rove-addrbook artifact (`.rab`): the versioned, general-purpose

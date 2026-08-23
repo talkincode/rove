@@ -209,14 +209,23 @@ rove validate-snapshot --node-id dev-local-01 snapshot.json
 }
 ```
 
-跑起来，验证一下：
+跑起来，验证一下三件事：能认证、会拒绝、留得下审计。
 
 ```bash
 ./target/release/rove -c config.toml
-curl -x http://alice:s3cret@127.0.0.1:8080 https://ifconfig.me
+
+# 1. 带凭据的应用流量正常走策略出去
+curl -x http://alice:s3cret@127.0.0.1:8080 https://api.github.com/zen
+
+# 2. 不带凭据必须被拒（407）——Rove 任何时候都不是开放代理
+curl -sS -o /dev/null -w '%{http_code}\n' -x http://127.0.0.1:8080 https://api.github.com/zen
+
+# 3. 每条连接都留下「谁、去哪、命中哪个决策、从哪个出口出去」
+tail -n1 ./logs/access.$(date +%F) | jq '{username, target_host, decision, egress, result}'
 ```
 
-Docker 部署时把监听地址改成 `0.0.0.0:8080`，并把配置里的 `cache_path` 改为
+容器部署时才把监听地址放宽到 `0.0.0.0:8080`（示例配置默认绑 `127.0.0.1`，数据面对外可达
+应当是一次显式决定），并把配置里的 `cache_path` 改为
 `/var/lib/rove/snapshot.json`、`access_log.dir` 改为 `/var/log/rove`：
 
 ```bash
@@ -248,6 +257,20 @@ docker run -d --name rove -p 8080:8080 \
 - [项目画像与方向](./docs/roadmap.md) · [验收矩阵](./docs/acceptance-matrix.md) ·
   [`AGENT.md`](./AGENT.md) — 贡献前必读；验收矩阵定义每个一级能力的测试锚点与硬性覆盖门禁
   （Happy Path / 失败路径 / 双角色 / 恢复回滚 / 新功能必配 E2E）
+
+## ⚖️ 使用边界
+
+Rove 是通用的应用网络基础设施，用于出口治理、路径优化与访问审计。
+
+- **软件与网络运营是两回事。** 本项目只发布软件，不运营网络：不提供官方公共出口节点，
+  不提供任何形式的公共跨境网络接入服务，没有订阅、节点分发或流量套餐。所有出口线路
+  都由部署者自行准备并自行负责。
+- **默认强制认证，不存在开放代理形态。** 所有接入方式一律要求凭据；认证失败、账号过期、
+  策略命中阻断、快照编译失败或上游不可达时一律拒绝连接，不会降级为直连或匿名放行。
+- **部署者是合规责任主体。** 使用 Rove 组建的任何网络路径，都需遵守部署地与流量落地地的
+  法律法规，以及你与网络运营商、云厂商、上游服务商之间的协议。
+- **不面向消费级代理市场。** 项目不提供机场面板、订阅链接、流量计费、客户端一键配置这类
+  功能，相关需求不在项目范围内。
 
 ## 📄 许可
 
