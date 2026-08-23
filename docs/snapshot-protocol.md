@@ -85,7 +85,7 @@ Accept: application/json
           "action": {"type": "direct"}
         }
       ],
-      "default_egress": "egress-b"
+      "default_action": { "type": "egress", "egress": "egress-b" }
     }
   },
   "egresses": {
@@ -184,10 +184,26 @@ TUIC TLS keying-material token 认证。
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `routes` | array | 否 | 有序 route 数组，缺省为空。数组顺序就是协议语义：first-match-wins，不同 route 的 selector 可以重叠。 |
-| `default_egress` | string/null | 否 | 所有 route 都未命中时使用的 egress ID，必须存在于 `egresses`。缺省表示未命中即直连。 |
+| `default_action` | object/null | 否 | 所有 route 都未命中时执行的 action，语法与 `routes[].action` 完全一致。缺省等价于 `{"type":"direct"}`。 |
 
-`routes` 为空的 policy 是合法的——它退化为「只有 `default_egress`」，或在没有 `default_egress`
+`default_action` 与 route 的 `action` 共用同一个解码器和同一套词汇，读懂 route 就读懂 default。
+
+`routes` 为空的 policy 是合法的——它退化为「只有 `default_action`」，或在没有 `default_action`
 时退化为「认证后直连」。
+
+**deny-by-default（allowlist）策略**：把 `default_action` 设为 `{"type":"block"}`，policy 就只
+能到达它自己列出的目标，其余一律拒绝。选择器没有 catch-all 写法，这是表达「只放行清单内目标」
+的唯一方式：
+
+```json
+{
+  "routes": [
+    { "selectors": ["api.openai.com", "api.anthropic.com"], "action": { "type": "egress", "egress": "eu-egress" } },
+    { "selectors": ["10.0.0.0/8"], "action": { "type": "direct" } }
+  ],
+  "default_action": { "type": "block" }
+}
+```
 
 ### `routes[]`
 
@@ -255,7 +271,7 @@ SOCKS5 后端），**不是** A → B → 目标的串联多跳。运行时故�
 4. 任一候选的 first-match action 为 `block` 都会阻断。
 5. requested target 是域名时，sniffed host 的非 block action 不改变路由。
 6. requested target 是 IP 时，sniffed host 的非 block action 优先于 requested-IP action。
-7. 仍未选中 action 时使用 `default_egress`；没有 default 则直连。
+7. 仍未选中 action 时执行 policy 的 `default_action`；没有 default 则直连。
 
 sniff 只影响策略身份，不改写实际 dial target；访问日志的 `effective_policy_host` 记录最终
 用于选择 action 的 host。
@@ -309,7 +325,7 @@ sniff 只影响策略身份，不改写实际 dial target；访问日志的 `eff
 
 - 用户的 `policy` 为空，或引用了不存在的 policy。
 - route 的 `selectors` 为空。
-- `action` 或 `default_egress` 引用了不存在的 egress。
+- `action` 或 `default_action` 引用了不存在的 egress，或 egress ID 为空白。
 - egress ID / chain member ID 为空。
 - chain 没有成员，或同一 chain 内 member `id` / `priority` 重复。
 - chain member 的 backend 是另一条 chain。

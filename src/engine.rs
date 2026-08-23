@@ -262,13 +262,7 @@ mod tests {
                 )]),
             },
         );
-        let (routing_policies, egresses) = PolicySpec {
-            egress: None,
-            default_egress: None,
-            routed: vec![],
-            blocked: vec![],
-        }
-        .into_tables("g");
+        let (routing_policies, egresses) = PolicySpec::default().into_tables("g");
         let raw = RawSnapshot {
             version: 1,
             users,

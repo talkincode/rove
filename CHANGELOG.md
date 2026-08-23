@@ -2,13 +2,26 @@
 
 ## [Unreleased]
 
+### Added
+
+- routing policy 新增 `default_action`：所有 route 都未命中时执行的 action，语法与
+  `routes[].action` 完全一致（`egress` / `direct` / `block`）。把它设为
+  `{"type":"block"}` 即可写出 deny-by-default（allowlist）策略——policy 只能到达它自己
+  列出的目标。选择器没有 catch-all 写法，此前无法表达这种策略，未命中的目标只会退化为直连。
+  MQTT `user_policy_query` 的 `routing_policy.default_action` **总是存在**（缺省显式呈现
+  为 `{"action":"direct"}`），让运维直接看到未命中时的行为而不必从字段缺失去推断。
+
 ### Changed
 
+- **破坏性**：routing policy 的 `default_egress`（egress ID 字符串）由 `default_action`
+  （与 route 同形的 action 对象）取代。迁移：`"default_egress": "x"` 写成
+  `"default_action": {"type": "egress", "egress": "x"}`。带 `default_egress` 的快照会撞上
+  `deny_unknown_fields` 被整份拒收，节点继续使用上一份有效快照。
 - **破坏性**：快照协议收敛为单一 schema `1`（原 v4 的 `routing_policies` + named
   `egresses` 形状）。旧的 v1–v3 group 文档与 `userdata.json` 不再被解码——过期文档会
   撞上 `deny_unknown_fields` 被整份拒收，而不是静默降级成更弱的路由。
 - **破坏性**：MQTT `user_policy_query` 响应去掉 `group`、`policies` 与对象形态的
-  `policy`，改为字符串 `policy` 加一个带 `routes` / `default_egress` 的
+  `policy`，改为字符串 `policy` 加一个带 `routes` / `default_action` 的
   `routing_policy` 对象；`snapshot_schema_version` 现在返回 `1`。
 - **破坏性**：`rove-hop` 配置了任一入口监听时，`--username` / `--password`（或
   `Rove_HOP_USERNAME` / `Rove_HOP_PASSWORD`）成为必填项，不再回退到内置凭据。回退值会

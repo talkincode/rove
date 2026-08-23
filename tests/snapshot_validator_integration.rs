@@ -75,8 +75,8 @@ fn validates_a_file_with_a_machine_readable_secret_safe_summary() {
     assert_eq!(json["ok"], true);
     assert_eq!(json["schema_version"], 1);
     assert_eq!(json["version"], 41);
-    assert_eq!(json["users"], 3);
-    assert_eq!(json["routing_policies"], 3);
+    assert_eq!(json["users"], 4);
+    assert_eq!(json["routing_policies"], 4);
     assert_eq!(json["egresses"], 3);
     let text = String::from_utf8_lossy(&output.stdout);
     for secret in [

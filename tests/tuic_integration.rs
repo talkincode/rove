@@ -163,7 +163,6 @@ async fn connect_client(port: u16) -> quinn::Connection {
 fn engine_with(default_reverse_hop: Option<&str>) -> Arc<Engine> {
     rove::tls::init_crypto();
     let policy = PolicySpec {
-        egress: None,
         default_egress: default_reverse_hop.map(|hop| RawUpstream {
             kind: "reverse".to_string(),
             addr: hop.to_string(),
@@ -172,8 +171,7 @@ fn engine_with(default_reverse_hop: Option<&str>) -> Arc<Engine> {
             tls: false,
             skip_cert_verify: false,
         }),
-        routed: vec![],
-        blocked: vec![],
+        ..Default::default()
     };
     engine_with_policy(policy)
 }
@@ -499,10 +497,8 @@ async fn tuic_connect_observe_sniff_records_host_without_changing_stream_bytes()
 #[tokio::test]
 async fn tuic_route_sniffed_block_prevents_requested_ip_dial() {
     let engine = engine_with_policy(PolicySpec {
-        egress: None,
-        default_egress: None,
-        routed: vec![],
         blocked: vec!["blocked.example".to_string()],
+        ..Default::default()
     });
     let target = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let target_addr = target.local_addr().unwrap();
@@ -601,9 +597,8 @@ async fn tuic_route_sniffed_proxy_selects_egress_but_dials_requested_ip() {
             tls: false,
             skip_cert_verify: false,
         }),
-        default_egress: None,
         routed: vec!["route.example".to_string()],
-        blocked: vec![],
+        ..Default::default()
     });
     let (logger, mut records) = rove::access_log::AccessLogger::for_test();
     let stats = rove::stats::TrafficStats::new();

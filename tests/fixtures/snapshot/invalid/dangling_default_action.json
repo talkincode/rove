@@ -3,7 +3,7 @@
   "version": 1,
   "egresses": {},
   "routing_policies": {
-    "p": { "routes": [], "default_egress": "ghost" }
+    "p": { "routes": [], "default_action": { "type": "egress", "egress": "ghost" } }
   },
   "users": { "u": { "password": "x", "policy": "p" } }
 }

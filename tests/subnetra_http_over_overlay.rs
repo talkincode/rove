@@ -46,13 +46,7 @@ fn permissive_engine() -> Arc<Engine> {
             frontends: Default::default(),
         },
     );
-    let (routing_policies, egresses) = PolicySpec {
-        egress: None,
-        default_egress: None,
-        routed: Vec::new(),
-        blocked: Vec::new(),
-    }
-    .into_tables("default");
+    let (routing_policies, egresses) = PolicySpec::default().into_tables("default");
     let engine = Engine::new();
     let snapshot = Snapshot::compile(
         RawSnapshot {

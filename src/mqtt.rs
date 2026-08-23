@@ -997,7 +997,7 @@ mod tests {
                             },
                         },
                     ],
-                    default_egress: None,
+                    default_action: None,
                 },
             ),
             (
@@ -1009,7 +1009,7 @@ mod tests {
                             egress: "jp-pop".to_string(),
                         },
                     }],
-                    default_egress: None,
+                    default_action: None,
                 },
             ),
         ]);
@@ -1221,6 +1221,9 @@ mod tests {
         assert_eq!(routing["routes"][1]["action"], "egress");
         assert_eq!(routing["routes"][1]["egress"]["id"], "tokyo");
         assert_eq!(routing["routes"][2]["action"], "direct");
+        // The default is always reported, so an operator reading a policy over
+        // MQTT sees what an unmatched destination does without inferring it.
+        assert_eq!(routing["default_action"]["action"], "direct");
 
         let raw = serde_json::to_string(&value).unwrap();
         assert!(!raw.contains("login-secret"));

@@ -910,13 +910,7 @@ mod tests {
                 frontends: Default::default(),
             },
         );
-        let (routing_policies, egresses) = PolicySpec {
-            egress: None,
-            default_egress: None,
-            routed: Vec::new(),
-            blocked: Vec::new(),
-        }
-        .into_tables("open");
+        let (routing_policies, egresses) = PolicySpec::default().into_tables("open");
         let engine = Engine::new();
         engine.replace(
             Snapshot::compile(
@@ -949,10 +943,8 @@ mod tests {
             },
         );
         let (routing_policies, egresses) = PolicySpec {
-            egress: None,
-            default_egress: None,
-            routed: Vec::new(),
             blocked: vec![blocked_host.to_string()],
+            ..Default::default()
         }
         .into_tables("open");
         let engine = Engine::new();

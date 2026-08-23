@@ -160,7 +160,6 @@ async fn start_hop_and_wait(
 fn engine_via_hop(hop_id: &str) -> Arc<Engine> {
     rove::tls::init_crypto();
     let (routing_policies, egresses) = PolicySpec {
-        egress: None,
         default_egress: Some(RawUpstream {
             kind: "reverse".to_string(),
             addr: hop_id.to_string(),
@@ -169,8 +168,7 @@ fn engine_via_hop(hop_id: &str) -> Arc<Engine> {
             tls: false,
             skip_cert_verify: false,
         }),
-        routed: vec![],
-        blocked: vec![],
+        ..Default::default()
     }
     .into_tables("g");
     let mut users = HashMap::new();

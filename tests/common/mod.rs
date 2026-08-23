@@ -73,8 +73,12 @@ use std::collections::HashMap;
 pub struct PolicySpec {
     /// Backend for hosts matched by `routed`. `None` = no egress route is emitted.
     pub egress: Option<RawUpstream>,
-    /// Backend used when no route matches. `None` = direct.
+    /// Backend used when no route matches. `None` = direct unless
+    /// `deny_by_default` is set.
     pub default_egress: Option<RawUpstream>,
+    /// Block every destination no route names. Mutually exclusive with
+    /// `default_egress`.
+    pub deny_by_default: bool,
     /// Selectors routed through `egress`.
     pub routed: Vec<String>,
     /// Selectors denied outright.
@@ -111,16 +115,24 @@ impl PolicySpec {
                 });
             }
         }
-        let default_egress = self.default_egress.map(|backend| {
-            let egress_id = format!("{id}-default");
-            egresses.insert(egress_id.clone(), RawEgress::Upstream { backend });
-            egress_id
-        });
+        assert!(
+            !(self.deny_by_default && self.default_egress.is_some()),
+            "PolicySpec {id:?}: deny_by_default and default_egress disagree"
+        );
+        let default_action = match (self.default_egress, self.deny_by_default) {
+            (Some(backend), _) => {
+                let egress_id = format!("{id}-default");
+                egresses.insert(egress_id.clone(), RawEgress::Upstream { backend });
+                Some(RawAction::Egress { egress: egress_id })
+            }
+            (None, true) => Some(RawAction::Block),
+            (None, false) => None,
+        };
 
         (
             RawRoutingPolicy {
                 routes,
-                default_egress,
+                default_action,
             },
             egresses,
         )

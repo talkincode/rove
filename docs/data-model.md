@@ -42,7 +42,7 @@ Rove 只有一种快照 schema（`schema_version: 1`），它把三个概念分�
           "action": {"type": "direct"}
         }
       ],
-      "default_egress": "backup"
+      "default_action": { "type": "egress", "egress": "backup" }
     }
   },
   "egresses": {
@@ -79,14 +79,19 @@ route 复用而不复制凭据；换出口只改 egress realization，不动任�
 2. 取该用户的 policy。
 3. 按 routes 数组顺序求第一个命中的 route，采用它的 action。
 4. 任一候选（requested host / 已验证的 sniffed host）first-match 为 block → 拒绝。
-5. 都未命中 → 有 default_egress 就用它，否则直连。
+5. 都未命中 → 执行 policy 的 default_action；没有 default 则直连。
 ```
 
-即：**顺序即语义，第一个命中的 route 说了算；未命中可兜底默认出口；都没有就直连。**
+即：**顺序即语义，第一个命中的 route 说了算；未命中执行 policy 的默认 action；没有默认就直连。**
+
+`default_action` 与 route 的 `action` 是同一套词汇（`egress` / `direct` / `block`），所以未命中
+时的行为写得和命中时一样明确：
 
 - 纯直连策略：给用户一条空 policy（`"open": {}`）即可。
-- 全量走某个出口：policy 只配 `default_egress`，不配 route。
-- 选择性分流：把需要走出口的域名/网段写成 route，其余落到 `default_egress` 或直连。
+- 全量走某个出口：policy 只配 `default_action` 为 `{"type":"egress","egress":"..."}`，不配 route。
+- 选择性分流：把需要走出口的域名/网段写成 route，其余落到 `default_action` 或直连。
+- **deny-by-default（allowlist）**：`default_action` 设为 `{"type":"block"}`，policy 就只能到达
+  它自己列出的目标。选择器没有 catch-all 写法，这是表达「只放行清单内目标」的唯一方式。
 
 > route 之间允许 selector 重叠，**数组顺序决定结果**。因此 block route 应该放在最前面——一条更靠前的
 > `egress` route 会让后面的 `block` route 永远不生效。

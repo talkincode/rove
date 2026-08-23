@@ -66,7 +66,7 @@ Rove 应该成为一个可以部署在边缘节点上的自包含**应用出口�
 
 - 用户认证、过期校验、策略决策和热替换
 
-  `src/engine.rs` 使用 `ArcSwap<Snapshot>` 提供热替换快照，认证路径按用户名查找用户并检查密码与过期日期。`src/model.rs` 将控制面下发的唯一一种快照 schema（`schema_version: 1`：`users` + `routing_policies` + `egresses` 三张独立表）按节点 `node_id` 编译为运行期 `Snapshot`（`Snapshot::compile(doc, node_id)`）。决策按有序 route first-match-wins 选择 named egress / direct / block，未命中可用 `default_egress`，否则直连。全部 wire 结构 `deny_unknown_fields`，异形或含未知字段的文档整份拒收而非半懂半猜地执行。`node_overrides` 让控制面向所有节点发同一份快照，同时仍能给个别节点整项替换已存在的 egress realization（不能新增 node-only egress，也不能改 policy），详见 `docs/snapshot-protocol.md`。
+  `src/engine.rs` 使用 `ArcSwap<Snapshot>` 提供热替换快照，认证路径按用户名查找用户并检查密码与过期日期。`src/model.rs` 将控制面下发的唯一一种快照 schema（`schema_version: 1`：`users` + `routing_policies` + `egresses` 三张独立表）按节点 `node_id` 编译为运行期 `Snapshot`（`Snapshot::compile(doc, node_id)`）。决策按有序 route first-match-wins 选择 named egress / direct / block，未命中执行 policy 的 `default_action`（同一套 `egress` / `direct` / `block` 词汇，其中 `block` 表达 deny-by-default 策略），没有 default 则直连。全部 wire 结构 `deny_unknown_fields`，异形或含未知字段的文档整份拒收而非半懂半猜地执行。`node_overrides` 让控制面向所有节点发同一份快照，同时仍能给个别节点整项替换已存在的 egress realization（不能新增 node-only egress，也不能改 policy），详见 `docs/snapshot-protocol.md`。
 
 - 域名与 IP 规则匹配
 
