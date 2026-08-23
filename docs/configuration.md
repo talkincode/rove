@@ -389,7 +389,7 @@ name = "bj-spoke"
 ## `[dns]` 专用出口 DNS（默认关闭）
 
 默认 Rove 用操作系统解析器（`getaddrinfo`）解析出口目标，行为与旧版逐字节一致。当宿主机的
-`/etc/resolv.conf` 指向被污染 / 分裂视图的解析器，而网络里另有一台干净（防污染）DNS 时，配上
+`/etc/resolv.conf` 指向分裂视图或不被信任的解析器，而网络里另有指定递归解析器时，配上
 `[dns].servers`：Rove 便把**所有出口域名解析**——直连（`Direct`）、上游代理拨号（`dial`）、
 reverse UDP 解析、edge 拨号——统一改走这些服务器，绕开宿主机配置。`servers` 为空或整段缺省即
 无操作，继续用系统解析器（完全向后兼容，仅在显式配置时生效）。
@@ -406,13 +406,13 @@ cache_size = 64         # 内存 answer 缓存条数；0 关闭
 
 配置解析 fail-closed：`servers` 里出现非法 `ip` / `ip:port`，或 `protocol` 不是
 `udp`/`tcp`/`tls`(`dot`)/`https`(`doh`)，启动即报错（避免拼错时静默回落系统解析器）。UDP 应答被
-截断时会自动改用 TCP 重试（防污染服务器常返回较大的 EDNS 填充应答）。字面量 IP 目标不走 DNS，直接连接。
+截断时会自动改用 TCP 重试（部分解析器会返回较大的 EDNS 应答）。字面量 IP 目标不走 DNS，直接连接。
 
 ### 加密 DNS（DoT / DoH）
 
-明文 UDP/TCP DNS 仍可能被链路上抢先注入伪造应答（GFW 式投毒）。跨不可信链路访问防污染服务器时，
+明文 UDP/TCP DNS 仍可能被链路上抢先注入伪造应答。跨不可信链路解析时，
 建议用 **DoT（DNS-over-TLS，853）** 或 **DoH（DNS-over-HTTPS，443）**——它们对查询加密、校验服务器
-证书，真正抗篡改。默认端口随传输自动选择（`tls`=853、`https`=443），bare IP 无需写端口。
+证书。默认端口随传输自动选择（`tls`=853、`https`=443），bare IP 无需写端口。
 
 ```toml
 [dns]
@@ -425,14 +425,14 @@ tls_server_name = "cloudflare-dns.com"  # 必填：SNI + 证书校验名
 ```
 
 信任根按优先级：`tls_insecure`（接受任意证书，仅自签名逃生用）> `tls_ca`（只信这份 CA，适合自建
-防污染服务器）> 默认 Mozilla webpki 根（加上 `Rove_EXTRA_CA_CERTS`，适合公共 DoT/DoH）。`tls`/`https`
+内部 DNS）> 默认 Mozilla webpki 根（加上 `Rove_EXTRA_CA_CERTS`，适合公共 DoT/DoH）。`tls`/`https`
 未填 `tls_server_name` 会 fail-closed 报错。若服务器证书用 IP-SAN，把 `tls_server_name` 填成该 IP。
 加密传输走 `ring`，不引入 `aws-lc-rs`。
 
 > **rove-hop 独立二进制**：`rove-hop` 不读该 TOML 段，但支持等价的命令行开关
 > `--dns-server`（可重复）/ `--dns-protocol`（`udp|tcp|tls|https`）/ `--dns-server-name` /
 > `--dns-doh-path` / `--dns-ca` / `--dns-insecure`，让位于目标网络里的 hop 也能把出口目标解析
-> 走到干净 DNS；不设则回落系统解析器。
+> 走到指定解析器；不设则回落系统解析器。
 
 ## `[addrbook]` 版本化地址数据集（默认关闭）
 

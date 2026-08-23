@@ -246,8 +246,8 @@ open_timeout_secs = 10       # 等待 hop 接受隧道 CONNECT 的超时；超�
 # name = "bj-spoke"
 
 # 专用出口 DNS（默认关闭 → 用操作系统解析器，行为与旧版逐字节一致）。
-# 当宿主机的 /etc/resolv.conf 指向被污染/分裂视图的解析器，但网络里另有一台
-# 干净（防污染）DNS 时，把 servers 填上：Rove 的所有出口域名解析（直连 Direct、
+# 当宿主机的 /etc/resolv.conf 指向分裂视图或不被信任的解析器，但网络里另有
+# 指定递归解析器时，把 servers 填上：Rove 的所有出口域名解析（直连 Direct、
 # 上游代理 dial、reverse UDP、edge 拨号）都会改走这些服务器，不再读宿主机配置。
 # servers 为空或整段缺省 → 无操作，继续用系统解析器。
 # [dns]
@@ -258,11 +258,11 @@ open_timeout_secs = 10       # 等待 hop 接受隧道 CONNECT 的超时；超�
 # ipv4_first = true       # 优先 IPv4（先查 A 再查 AAAA）；多数边缘出口是 IPv4-first
 # cache_size = 64         # 内存answer缓存条数；0 关闭缓存
 #
-# 加密 DNS（DoT/DoH）——真正抗链路投毒/篡改，推荐用于跨不可信链路访问防污染服务器：
+# 加密 DNS（DoT/DoH）——查询加密并校验服务器证书，推荐用于跨不可信链路解析：
 # protocol = "tls"                    # 或 "https"
 # tls_server_name = "dns.example.com" # 必填：SNI + 证书校验名（IP-SAN 证书就填 IP）
 # doh_path = "/dns-query"             # 仅 DoH，默认 /dns-query
-# tls_ca = "/etc/rove/dns-ca.pem"      # 私有 CA（自建防污染服务器）；留空=Mozilla 公共根 + Rove_EXTRA_CA_CERTS
+# tls_ca = "/etc/rove/dns-ca.pem"      # 私有 CA（自建内部 DNS）；留空=Mozilla 公共根 + Rove_EXTRA_CA_CERTS
 # tls_insecure = false                # 跳过证书校验（自签名）——危险，会抵消 DoT/DoH 的防篡改意义
 
 # rove-addrbook：版本化地址数据集（.rab 工件，规范见 docs/addrbook-format.md）。

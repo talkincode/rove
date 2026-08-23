@@ -43,7 +43,7 @@ hop 用单一用户名密码认证，来自命令行或环境变量：
 
 ## 专用出口 DNS（可选）
 
-hop 常位于目标网络里、亲自解析并连出用户目标域名，因此这里最需要防污染 DNS。用
+hop 常位于目标网络里、亲自解析并连出用户目标域名，因此这里最需要指定可信解析器。用
 `--dns-server`（可重复，`ip` 或 `ip:port`）把 hop 的**所有出口目标解析**（HTTP/SOCKS5
 入口与反向隧道目标）改走指定 DNS，`--dns-protocol udp|tcp|tls|https` 选传输；不设则用系统解析器。
 bare IP 的默认端口随传输：udp/tcp=53、tls=853、https=443。
@@ -53,7 +53,7 @@ bare IP 的默认端口随传输：udp/tcp=53、tls=853、https=443。
   --dns-server 10.0.0.53 --dns-server 10.0.0.54:5353 --dns-protocol tcp
 ```
 
-跨不可信链路时用加密 DNS（DoT/DoH）抗投毒，`--dns-server-name` 校验证书名，私有服务器用
+跨不可信链路时用加密 DNS（DoT/DoH）保证应答完整性，`--dns-server-name` 校验证书名，私有服务器用
 `--dns-ca` 指向自签 CA：
 
 ```bash
