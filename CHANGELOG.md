@@ -1,5 +1,20 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- **破坏性**：快照协议收敛为单一 schema `1`（原 v4 的 `routing_policies` + named
+  `egresses` 形状）。旧的 v1–v3 group 文档与 `userdata.json` 不再被解码——过期文档会
+  撞上 `deny_unknown_fields` 被整份拒收，而不是静默降级成更弱的路由。
+- **破坏性**：MQTT `user_policy_query` 响应去掉 `group`、`policies` 与对象形态的
+  `policy`，改为字符串 `policy` 加一个带 `routes` / `default_egress` 的
+  `routing_policy` 对象；`snapshot_schema_version` 现在返回 `1`。
+- **破坏性**：`rove-hop` 配置了任一入口监听时，`--username` / `--password`（或
+  `Rove_HOP_USERNAME` / `Rove_HOP_PASSWORD`）成为必填项，不再回退到内置凭据。回退值会
+  被编进每一份发布二进制，忘记设置等同于运行一个公开口令的开放代理。反向 QUIC-only
+  的 hop 不监听入口，不受影响。
+
 ## [0.1.0] - 2026-08-23
 
 ### Added

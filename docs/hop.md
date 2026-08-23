@@ -12,7 +12,11 @@ hop 用单一用户名密码认证，来自命令行或环境变量：
 - `--username` / `--password`
 - `Rove_HOP_USERNAME` / `Rove_HOP_PASSWORD`
 
-未配置时使用兼容默认值 `rove` / `rove`，进程会打印警告。**公网或共享网络部署必须显式设置非默认凭据。**
+**只要配置了任一入口监听，这两项就是必填的**：两项都缺、或只给一半，进程启动即失败并说明该设哪些参数。
+hop 没有内置回退凭据——回退值会被编进每一份发布二进制，忘记设置就等于把一个公开口令的开放代理
+挂到网上。反向 QUIC-only 的 hop 不监听任何入口，因此不需要凭据。
+
+> 下文聚焦单个功能的示例默认已经 `export Rove_HOP_USERNAME` / `Rove_HOP_PASSWORD`，因此命令行里不再重复这两项。
 
 ## 三种入口
 
@@ -24,8 +28,8 @@ hop 用单一用户名密码认证，来自命令行或环境变量：
 | `--tls-cert` / `--tls-key` | TLS 入口所需的证书与私钥 |
 
 ```bash
-# 只启动明文 SOCKS5
-./rove-hop --socks5 0.0.0.0:1080
+# 只启动明文 SOCKS5（凭据必填）
+./rove-hop --socks5 0.0.0.0:1080 --username hop-user --password hop-pass
 
 # 同时启动 HTTPS、SOCKS5、SOCKS5-over-TLS
 ./rove-hop \
@@ -38,8 +42,9 @@ hop 用单一用户名密码认证，来自命令行或环境变量：
   --password hop-pass
 ```
 
-主节点分组里把 `upstream` 指向这个 hop（`kind = "http"` 或 `"socks5"`，`addr` 填 hop 地址，带上凭据），
-即可把命中 `proxy` 的流量分流过来。见 [数据模型 · 二级代理](./data-model.md#二级代理upstream)。
+控制面快照里建一个 named egress 指向这个 hop（`backend.kind = "http"` 或 `"socks5"`，`addr` 填 hop 地址，
+带上同一套凭据），再让 routing policy 的 route 选中它，即可把匹配流量从这个 hop 发出。
+见 [数据模型 · 出口 backend](./data-model.md#出口-backend)。
 
 ## 专用出口 DNS（可选）
 

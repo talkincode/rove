@@ -65,7 +65,7 @@ async fn main() -> anyhow::Result<()> {
     if !args.listeners.is_empty() && credentials.uses_default() {
         warn!(
             username = credentials.username(),
-            "rove hop proxy is using default authentication; set --username/--password or Rove_HOP_USERNAME/Rove_HOP_PASSWORD"
+            "hop listener is using the well-known placeholder credential documented in the source; rotate it before exposing this listener"
         );
     }
 
@@ -692,24 +692,31 @@ impl Args {
         Ok(Some(cfg))
     }
 
+    /// Resolve listener credentials from `--username`/`--password` or
+    /// `Rove_HOP_USERNAME`/`Rove_HOP_PASSWORD`.
+    ///
+    /// A hop that serves a listener must never fall back to a built-in
+    /// credential: the fallback is compiled into every published binary, so an
+    /// operator who forgets the flags would be running an effectively open
+    /// proxy. Both halves must be supplied together - completing a lone
+    /// `--username` with a default password would be the same hole wearing a
+    /// different name. Reverse-only hops have no inbound surface to
+    /// authenticate, so they are allowed to carry an unused placeholder.
     fn credentials_with_env(
         &self,
         env_username: Option<&str>,
         env_password: Option<&str>,
     ) -> anyhow::Result<Credentials> {
-        let username = first_non_empty([
-            self.username.as_deref(),
-            env_username,
-            Some(DEFAULT_USERNAME),
-        ])
-        .unwrap_or(DEFAULT_USERNAME);
-        let password = first_non_empty([
-            self.password.as_deref(),
-            env_password,
-            Some(DEFAULT_PASSWORD),
-        ])
-        .unwrap_or(DEFAULT_PASSWORD);
-        Credentials::new(username, password)
+        let username = first_non_empty([self.username.as_deref(), env_username]);
+        let password = first_non_empty([self.password.as_deref(), env_password]);
+        match (username, password) {
+            (Some(username), Some(password)) => Credentials::new(username, password),
+            _ if self.listeners.is_empty() => Credentials::new(DEFAULT_USERNAME, DEFAULT_PASSWORD),
+            _ => anyhow::bail!(
+                "hop listeners require credentials: set --username and --password, \
+                 or Rove_HOP_USERNAME and Rove_HOP_PASSWORD"
+            ),
+        }
     }
 }
 
@@ -816,9 +823,9 @@ Reverse mode (for hops the edge cannot dial; each --reverse-quic starts a new ed
   --reverse-initial-mtu N        Fix the edge QUIC path MTU (UDP payload bytes, 1200-1500) for a compressed tunnel
   --reverse-global-max-streams N Global concurrent-tunnel ceiling across all edges (default: 0 = unlimited)
 
-Authentication:
-  --username USER   Proxy username (env: Rove_HOP_USERNAME; default: {DEFAULT_USERNAME})
-  --password PASS   Proxy password (env: Rove_HOP_PASSWORD; default: {DEFAULT_PASSWORD})
+Authentication (required whenever a listener is configured):
+  --username USER   Proxy username (env: Rove_HOP_USERNAME)
+  --password PASS   Proxy password (env: Rove_HOP_PASSWORD)
 
 Options:
   --tls-cert PATH    PEM certificate for --https / --socks5tls
@@ -953,17 +960,80 @@ mod tests {
     }
 
     #[test]
-    fn credentials_default_and_env_values() {
-        let args = Args::parse(["--socks5", "127.0.0.1:1080"]).unwrap();
-        assert!(args
-            .credentials_with_env(None, None)
+    fn credentials_accept_flags_or_environment() {
+        let from_env = Args::parse(["--socks5", "127.0.0.1:1080"])
             .unwrap()
-            .uses_default());
-
-        assert!(!args
             .credentials_with_env(Some("env-user"), Some("env-pass"))
+            .unwrap();
+        assert_eq!(from_env.username(), "env-user");
+
+        let from_flags = Args::parse([
+            "--socks5",
+            "127.0.0.1:1080",
+            "--username",
+            "flag-user",
+            "--password",
+            "flag-pass",
+        ])
+        .unwrap()
+        .credentials_with_env(Some("env-user"), Some("env-pass"))
+        .unwrap();
+        assert_eq!(
+            from_flags.username(),
+            "flag-user",
+            "explicit flags must win over the environment"
+        );
+    }
+
+    #[test]
+    fn a_listener_without_credentials_refuses_to_start() {
+        let err = Args::parse(["--socks5", "127.0.0.1:1080"])
             .unwrap()
-            .uses_default());
+            .credentials_with_env(None, None)
+            .expect_err("a listening hop must not fall back to well-known credentials");
+        let msg = err.to_string();
+        assert!(msg.contains("--username"), "{msg}");
+        assert!(msg.contains("Rove_HOP_PASSWORD"), "{msg}");
+    }
+
+    #[test]
+    fn a_listener_with_half_the_credentials_refuses_to_start() {
+        for (username, password) in [(Some("only-user"), None), (None, Some("only-pass"))] {
+            let args = Args::parse(["--socks5", "127.0.0.1:1080"]).unwrap();
+            assert!(
+                args.credentials_with_env(username, password).is_err(),
+                "half-configured credentials must not be completed from a default"
+            );
+        }
+    }
+
+    #[test]
+    fn blank_credentials_do_not_count_as_configured() {
+        let args = Args::parse([
+            "--socks5",
+            "127.0.0.1:1080",
+            "--username",
+            "   ",
+            "--password",
+            "",
+        ])
+        .unwrap();
+        assert!(args.credentials_with_env(None, None).is_err());
+    }
+
+    #[test]
+    fn a_reverse_only_hop_needs_no_listener_credentials() {
+        // Reverse-only hops expose no local listener, so there is no inbound
+        // surface to authenticate and nothing to leave open.
+        let args = Args::parse([
+            "--reverse-quic",
+            "127.0.0.1:9443",
+            "--reverse-hop-id",
+            "rove-hop-jp",
+        ])
+        .unwrap();
+        assert!(args.listeners.is_empty());
+        assert!(args.credentials_with_env(None, None).is_ok());
     }
 
     #[test]

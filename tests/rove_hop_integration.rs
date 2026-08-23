@@ -196,6 +196,39 @@ async fn socks5_forward_proxy_tunnels_after_authentication() {
         .expect("echo server task");
 }
 
+#[tokio::test]
+async fn a_listener_without_credentials_exits_instead_of_serving_an_open_proxy() {
+    // The hop binary ships no fallback credential, so an operator who forgets
+    // --username/--password must get a dead process rather than a listener that
+    // anyone can use. Assert on the process, not just on argument parsing:
+    // the whole point is that nothing ever binds.
+    let port = unused_loopback_port();
+    let addr = format!("127.0.0.1:{port}");
+    let output = Command::new(env!("CARGO_BIN_EXE_rove-hop"))
+        .arg("--socks5")
+        .arg(&addr)
+        .arg("--access-log-disable")
+        .env_remove("Rove_HOP_USERNAME")
+        .env_remove("Rove_HOP_PASSWORD")
+        .stdin(Stdio::null())
+        .output()
+        .expect("run rove-hop");
+
+    assert!(!output.status.success(), "hop started without credentials");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("hop listeners require credentials")
+            && stderr.contains("--username")
+            && stderr.contains("Rove_HOP_PASSWORD"),
+        "startup failure must name the settings to fix: {stderr}"
+    );
+    assert!(
+        std::net::TcpStream::connect_timeout(&addr.parse().unwrap(), Duration::from_millis(200))
+            .is_err(),
+        "hop left a listener bound on {addr} after refusing to start"
+    );
+}
+
 async fn spawn_hop() -> HopProcess {
     let mut last = String::new();
     for attempt in 0..8 {
