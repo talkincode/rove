@@ -58,7 +58,7 @@
         { "selectors": ["overlap.example.com"], "action": { "type": "egress", "egress": "egress-a" } },
         { "selectors": ["overlap.example.com"], "action": { "type": "block" } }
       ],
-      "default_egress": "egress-b"
+      "default_action": { "type": "egress", "egress": "egress-b" }
     },
     "policy-direct-default": {
       "routes": []
@@ -67,7 +67,14 @@
       "routes": [
         { "selectors": ["denied.example.com"], "action": { "type": "block" } }
       ],
-      "default_egress": "egress-a"
+      "default_action": { "type": "egress", "egress": "egress-a" }
+    },
+    "policy-allowlist": {
+      "routes": [
+        { "selectors": ["api.openai.com"], "action": { "type": "egress", "egress": "egress-a" } },
+        { "selectors": ["10.0.0.0/8"], "action": { "type": "direct" } }
+      ],
+      "default_action": { "type": "block" }
     }
   },
   "users": {
@@ -88,6 +95,10 @@
     "evan": {
       "password": "evan-login-secret",
       "policy": "policy-default-egress"
+    },
+    "frida": {
+      "password": "frida-login-secret",
+      "policy": "policy-allowlist"
     }
   },
   "node_overrides": {

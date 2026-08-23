@@ -27,12 +27,7 @@ const RATE_LIMIT_TEST_BYTES: usize = 48 * 1024;
 #[tokio::test]
 async fn http_absolute_get_forwards_origin_form_and_strips_proxy_headers() {
     let (origin_addr, captured, origin_task) = start_http_origin(b"get-ok").await;
-    let engine = engine_with_policy(PolicySpec {
-        egress: None,
-        default_egress: None,
-        routed: Vec::new(),
-        blocked: Vec::new(),
-    });
+    let engine = engine_with_policy(PolicySpec::default());
     let (mut client, proxy_task) = spawn_http_proxy(engine);
     let token = base64::engine::general_purpose::STANDARD.encode(format!("{USERNAME}:{PASSWORD}"));
     let request = format!(
@@ -70,12 +65,7 @@ async fn http_absolute_get_forwards_origin_form_and_strips_proxy_headers() {
 #[tokio::test]
 async fn http_absolute_post_forwards_body_sent_with_request_head() {
     let (origin_addr, captured, origin_task) = start_http_origin(b"post-ok").await;
-    let engine = engine_with_policy(PolicySpec {
-        egress: None,
-        default_egress: None,
-        routed: Vec::new(),
-        blocked: Vec::new(),
-    });
+    let engine = engine_with_policy(PolicySpec::default());
     let (mut client, proxy_task) = spawn_http_proxy(engine);
     let token = base64::engine::general_purpose::STANDARD.encode(format!("{USERNAME}:{PASSWORD}"));
     let body = b"name=rove&mode=plain";
@@ -105,12 +95,7 @@ async fn http_absolute_post_forwards_body_sent_with_request_head() {
 async fn http_absolute_request_requires_auth_before_dialing_origin() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let origin_addr = listener.local_addr().unwrap();
-    let engine = engine_with_policy(PolicySpec {
-        egress: None,
-        default_egress: None,
-        routed: Vec::new(),
-        blocked: Vec::new(),
-    });
+    let engine = engine_with_policy(PolicySpec::default());
     let (mut client, proxy_task) = spawn_http_proxy(engine);
     client
         .write_all(format!("GET http://{origin_addr}/ HTTP/1.1\r\n\r\n").as_bytes())
@@ -131,12 +116,7 @@ async fn http_absolute_request_requires_auth_before_dialing_origin() {
 #[tokio::test]
 async fn http_connect_direct_tunnels_bytes() {
     let (target_addr, echo_task) = start_echo_server().await;
-    let engine = engine_with_policy(PolicySpec {
-        egress: None,
-        default_egress: None,
-        routed: Vec::new(),
-        blocked: Vec::new(),
-    });
+    let engine = engine_with_policy(PolicySpec::default());
     let (mut client, proxy_task) = spawn_http_proxy(engine);
 
     let token = base64::engine::general_purpose::STANDARD.encode(format!("{USERNAME}:{PASSWORD}"));
@@ -165,12 +145,7 @@ async fn http_connect_direct_tunnels_bytes() {
 #[tokio::test]
 async fn http_connect_observe_sniff_records_host_without_changing_tunnel_bytes() {
     let (target_addr, echo_task) = start_echo_server().await;
-    let engine = engine_with_policy(PolicySpec {
-        egress: None,
-        default_egress: None,
-        routed: Vec::new(),
-        blocked: Vec::new(),
-    });
+    let engine = engine_with_policy(PolicySpec::default());
     let (logger, mut records) = rove::access_log::AccessLogger::for_test();
     let stats = rove::stats::TrafficStats::new();
     let (mut client, proxy_task) = spawn_http_proxy_with_observe(engine, logger, stats.clone());
@@ -198,12 +173,7 @@ async fn http_connect_observe_sniff_records_host_without_changing_tunnel_bytes()
 #[tokio::test]
 async fn access_log_file_records_bytes_for_successful_http_tunnel() {
     let (target_addr, echo_task) = start_echo_server().await;
-    let engine = engine_with_policy(PolicySpec {
-        egress: None,
-        default_egress: None,
-        routed: Vec::new(),
-        blocked: Vec::new(),
-    });
+    let engine = engine_with_policy(PolicySpec::default());
 
     let dir = temp_access_log_dir("http-success");
     let cfg = rove::config::AccessLogConfig {
@@ -267,12 +237,7 @@ async fn access_log_file_records_bytes_for_successful_http_tunnel() {
 #[tokio::test]
 async fn socks5_connect_direct_tunnels_bytes() {
     let (target_addr, echo_task) = start_echo_server().await;
-    let engine = engine_with_policy(PolicySpec {
-        egress: None,
-        default_egress: None,
-        routed: Vec::new(),
-        blocked: Vec::new(),
-    });
+    let engine = engine_with_policy(PolicySpec::default());
     let (mut client, proxy_task) = spawn_socks5_proxy(engine);
 
     client.write_all(&[0x05, 0x01, 0x02]).await.unwrap();
@@ -315,10 +280,8 @@ async fn socks5_connect_direct_tunnels_bytes() {
 #[tokio::test]
 async fn http_connect_blocked_by_policy_returns_403_without_dialing_out() {
     let engine = engine_with_policy(PolicySpec {
-        egress: None,
-        default_egress: None,
-        routed: Vec::new(),
         blocked: vec!["blocked.example".to_string()],
+        ..Default::default()
     });
     let (mut client, proxy_task) = spawn_http_proxy(engine);
 
@@ -341,10 +304,8 @@ async fn http_connect_blocked_by_policy_returns_403_without_dialing_out() {
 #[tokio::test]
 async fn diagnostic_session_emits_redacted_policy_event_for_http_block() {
     let engine = engine_with_policy(PolicySpec {
-        egress: None,
-        default_egress: None,
-        routed: Vec::new(),
         blocked: vec!["blocked.example".to_string()],
+        ..Default::default()
     });
     let (registry, mut events) = diagnostics_registry();
     arm_session(&registry, "diag-http", USERNAME);
@@ -381,12 +342,7 @@ async fn diagnostic_session_emits_redacted_policy_event_for_http_block() {
 #[tokio::test]
 async fn diagnostic_session_emits_splice_event_for_socks5_success() {
     let (target_addr, echo_task) = start_echo_server().await;
-    let engine = engine_with_policy(PolicySpec {
-        egress: None,
-        default_egress: None,
-        routed: Vec::new(),
-        blocked: Vec::new(),
-    });
+    let engine = engine_with_policy(PolicySpec::default());
     let (registry, mut events) = diagnostics_registry();
     arm_session(&registry, "diag-socks", USERNAME);
     let (mut client, proxy_task) = spawn_socks5_proxy_with_diagnostics(engine, registry);
@@ -415,12 +371,7 @@ async fn diagnostic_session_emits_splice_event_for_socks5_success() {
 #[tokio::test]
 async fn no_diagnostic_events_without_active_session() {
     let (target_addr, echo_task) = start_echo_server().await;
-    let engine = engine_with_policy(PolicySpec {
-        egress: None,
-        default_egress: None,
-        routed: Vec::new(),
-        blocked: Vec::new(),
-    });
+    let engine = engine_with_policy(PolicySpec::default());
     // Registry is wired but no session is armed.
     let (registry, mut events) = diagnostics_registry();
     let (mut client, proxy_task) = spawn_http_proxy_with_diagnostics(engine, registry);
@@ -441,17 +392,7 @@ async fn no_diagnostic_events_without_active_session() {
 }
 #[tokio::test]
 async fn http_connect_max_connections_rejects_second_tunnel_then_releases() {
-    let engine = engine_with_limits(
-        0,
-        0,
-        1,
-        PolicySpec {
-            egress: None,
-            default_egress: None,
-            routed: Vec::new(),
-            blocked: Vec::new(),
-        },
-    );
+    let engine = engine_with_limits(0, 0, 1, PolicySpec::default());
 
     let (first_target_addr, first_echo_task) = start_echo_server().await;
     let (mut first_client, first_proxy_task) = spawn_http_proxy(engine.clone());
@@ -480,17 +421,7 @@ async fn http_connect_max_connections_rejects_second_tunnel_then_releases() {
 
 #[tokio::test]
 async fn socks5_max_connections_rejects_second_tunnel_then_releases() {
-    let engine = engine_with_limits(
-        0,
-        0,
-        1,
-        PolicySpec {
-            egress: None,
-            default_egress: None,
-            routed: Vec::new(),
-            blocked: Vec::new(),
-        },
-    );
+    let engine = engine_with_limits(0, 0, 1, PolicySpec::default());
 
     let (first_target_addr, first_echo_task) = start_echo_server().await;
     let (mut first_client, first_proxy_task) = spawn_socks5_proxy(engine.clone());
@@ -518,16 +449,7 @@ async fn socks5_max_connections_rejects_second_tunnel_then_releases() {
 #[tokio::test]
 async fn http_connect_down_rate_throttles_target_to_client_bytes() {
     let (target_addr, target_task) = start_sender_server(RATE_LIMIT_TEST_BYTES).await;
-    let engine = engine_with_rates(
-        0,
-        RATE_LIMIT_BYTES_PER_SEC,
-        PolicySpec {
-            egress: None,
-            default_egress: None,
-            routed: Vec::new(),
-            blocked: Vec::new(),
-        },
-    );
+    let engine = engine_with_rates(0, RATE_LIMIT_BYTES_PER_SEC, PolicySpec::default());
     let (mut client, proxy_task) = spawn_http_proxy(engine);
 
     establish_http_tunnel(&mut client, target_addr).await;
@@ -551,16 +473,7 @@ async fn http_connect_down_rate_throttles_target_to_client_bytes() {
 #[tokio::test]
 async fn http_connect_up_rate_throttles_client_to_target_bytes() {
     let (target_addr, target_task) = start_receiver_server(RATE_LIMIT_TEST_BYTES).await;
-    let engine = engine_with_rates(
-        RATE_LIMIT_BYTES_PER_SEC,
-        0,
-        PolicySpec {
-            egress: None,
-            default_egress: None,
-            routed: Vec::new(),
-            blocked: Vec::new(),
-        },
-    );
+    let engine = engine_with_rates(RATE_LIMIT_BYTES_PER_SEC, 0, PolicySpec::default());
     let (mut client, proxy_task) = spawn_http_proxy(engine);
 
     establish_http_tunnel(&mut client, target_addr).await;
@@ -680,12 +593,7 @@ async fn establish_socks5_tunnel(client: &mut DuplexStream, target_addr: SocketA
 #[tokio::test]
 async fn socks5_connect_observe_sniff_records_host_without_changing_tunnel_bytes() {
     let (target_addr, echo_task) = start_echo_server().await;
-    let engine = engine_with_policy(PolicySpec {
-        egress: None,
-        default_egress: None,
-        routed: Vec::new(),
-        blocked: Vec::new(),
-    });
+    let engine = engine_with_policy(PolicySpec::default());
     let (logger, mut records) = rove::access_log::AccessLogger::for_test();
     let stats = rove::stats::TrafficStats::new();
     let (mut client, proxy_task) = spawn_socks5_proxy_with_observe(engine, logger, stats.clone());
@@ -712,12 +620,7 @@ async fn socks5_connect_observe_sniff_records_host_without_changing_tunnel_bytes
 #[tokio::test]
 async fn socks5_connect_observe_sniff_forwards_unsupported_payload_and_counts_outcome() {
     let (target_addr, echo_task) = start_echo_server().await;
-    let engine = engine_with_policy(PolicySpec {
-        egress: None,
-        default_egress: None,
-        routed: Vec::new(),
-        blocked: Vec::new(),
-    });
+    let engine = engine_with_policy(PolicySpec::default());
     let (logger, mut records) = rove::access_log::AccessLogger::for_test();
     let stats = rove::stats::TrafficStats::new();
     let (mut client, proxy_task) = spawn_socks5_proxy_with_observe(engine, logger, stats.clone());
@@ -744,10 +647,8 @@ async fn http_connect_route_sniffed_block_prevents_requested_ip_dial() {
     let target = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let target_addr = target.local_addr().unwrap();
     let engine = engine_with_policy(PolicySpec {
-        egress: None,
-        default_egress: None,
-        routed: Vec::new(),
         blocked: vec!["blocked.example".to_string()],
+        ..Default::default()
     });
     let (logger, mut records) = rove::access_log::AccessLogger::for_test();
     let stats = rove::stats::TrafficStats::new();
@@ -786,12 +687,7 @@ async fn http_connect_route_sniffed_block_prevents_requested_ip_dial() {
 #[tokio::test]
 async fn http_connect_route_unmatched_sniff_replays_captured_prefix_to_requested_ip() {
     let (target_addr, echo_task) = start_echo_server().await;
-    let engine = engine_with_policy(PolicySpec {
-        egress: None,
-        default_egress: None,
-        routed: Vec::new(),
-        blocked: Vec::new(),
-    });
+    let engine = engine_with_policy(PolicySpec::default());
     let (logger, mut records) = rove::access_log::AccessLogger::for_test();
     let stats = rove::stats::TrafficStats::new();
     let (mut client, proxy_task) = spawn_http_proxy_with_route(engine, logger, stats.clone());
@@ -827,9 +723,8 @@ async fn http_connect_route_sniffed_proxy_selects_egress_but_dials_requested_ip(
             tls: false,
             skip_cert_verify: false,
         }),
-        default_egress: None,
         routed: vec!["route.example".to_string()],
-        blocked: Vec::new(),
+        ..Default::default()
     });
     let (logger, mut records) = rove::access_log::AccessLogger::for_test();
     let stats = rove::stats::TrafficStats::new();
@@ -868,10 +763,8 @@ async fn socks5_connect_route_sniffed_block_prevents_requested_ip_dial() {
     let target = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let target_addr = target.local_addr().unwrap();
     let engine = engine_with_policy(PolicySpec {
-        egress: None,
-        default_egress: None,
-        routed: Vec::new(),
         blocked: vec!["blocked.example".to_string()],
+        ..Default::default()
     });
     let (logger, mut records) = rove::access_log::AccessLogger::for_test();
     let stats = rove::stats::TrafficStats::new();
@@ -918,9 +811,8 @@ async fn socks5_connect_route_sniffed_proxy_selects_egress_but_dials_requested_i
             tls: false,
             skip_cert_verify: false,
         }),
-        default_egress: None,
         routed: vec!["route.example".to_string()],
-        blocked: Vec::new(),
+        ..Default::default()
     });
     let (logger, mut records) = rove::access_log::AccessLogger::for_test();
     let stats = rove::stats::TrafficStats::new();
@@ -956,12 +848,7 @@ async fn socks5_connect_route_sniffed_proxy_selects_egress_but_dials_requested_i
 
 #[tokio::test]
 async fn http_connect_unresolvable_host_records_dns_stage() {
-    let engine = engine_with_policy(PolicySpec {
-        egress: None,
-        default_egress: None,
-        routed: Vec::new(),
-        blocked: Vec::new(),
-    });
+    let engine = engine_with_policy(PolicySpec::default());
     let (logger, mut records) = rove::access_log::AccessLogger::for_test();
     let (mut client, proxy_task) = spawn_http_proxy_with_access_log(engine, logger);
     let token = base64::engine::general_purpose::STANDARD.encode(format!("{USERNAME}:{PASSWORD}"));
@@ -992,12 +879,7 @@ async fn http_connect_unresolvable_host_records_dns_stage() {
 
 #[tokio::test]
 async fn http_connect_refused_port_records_dial_stage() {
-    let engine = engine_with_policy(PolicySpec {
-        egress: None,
-        default_egress: None,
-        routed: Vec::new(),
-        blocked: Vec::new(),
-    });
+    let engine = engine_with_policy(PolicySpec::default());
     let (logger, mut records) = rove::access_log::AccessLogger::for_test();
     let (mut client, proxy_task) = spawn_http_proxy_with_access_log(engine, logger);
     let token = base64::engine::general_purpose::STANDARD.encode(format!("{USERNAME}:{PASSWORD}"));
@@ -1042,9 +924,8 @@ async fn http_connect_upstream_tls_handshake_failure_records_tls_stage() {
             tls: true,
             skip_cert_verify: true,
         }),
-        default_egress: None,
         routed: vec!["example.com".to_string()],
-        blocked: Vec::new(),
+        ..Default::default()
     });
     let (logger, mut records) = rove::access_log::AccessLogger::for_test();
     let (mut client, proxy_task) = spawn_http_proxy_with_access_log(engine, logger);

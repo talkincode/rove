@@ -96,7 +96,7 @@ TUIC 的 UDP 只经 **reverse/2 UDP 出口**（唯一可行的非 Direct UDP 出
   "routing_policies": {
     "media": {
       "routes": [],
-      "default_egress": "tokyo"
+      "default_action": { "type": "egress", "egress": "tokyo" }
     }
   },
   "egresses": {

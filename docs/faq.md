@@ -82,7 +82,7 @@
 
 **决策顺序是什么？**
 按 policy 的 `routes` 数组 first-match-wins；命中 `block` 拒绝，命中 `egress`/`direct`
-按 action 执行；都未命中则用 `default_egress`，没有 default 则直连。sniff 安全语义见
+按 action 执行；都未命中则执行 policy 的 `default_action`，没有 default 则直连。sniff 安全语义见
 [数据模型 · 决策流程](./data-model.md#决策流程-decide)。
 
 **域名规则 `discord.dev` 会匹配子域名吗？**
@@ -90,7 +90,11 @@
 写在 route 的 `selectors` 里，语义相同。
 
 **怎么让某个用户全量走某个上游？**
-policy 配 `default_egress` 指向 named egress，不必写 catch-all route。未命中其它 route 的目标都会走该出口。
+policy 的 `default_action` 配 `{"type":"egress","egress":"<id>"}`，不必写 catch-all route。未命中其它 route 的目标都会走该出口。
+
+**怎么让某个用户只能访问白名单内的目标？**
+route 里逐条列出允许的目标，policy 的 `default_action` 配 `{"type":"block"}`。选择器没有 catch-all
+写法，`default_action` 是表达 deny-by-default 的唯一方式；未列出的目标一律拒绝，而不是退化为直连。
 
 **限速精度如何？**
 每用户字节令牌桶（`up_rate`/`down_rate`）。两者为 0 时走 `copy_bidirectional` 零开销快路，不影响吞吐。

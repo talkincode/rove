@@ -40,8 +40,10 @@ jq 'select(.kind=="connection" and .username=="alice" and .result!="success")' l
 - **本该走上游却直连了**（当前快照 schema）：确认目标命中了 policy `routes[].selectors`，且 action 指向
   正确的 named egress。注意匹配规则 —— 默认是**后缀匹配**，`full:` 才是精确。IP 目标要用 CIDR
   （如 `10.0.0.0/8`）。
-- **本该直连却走了上游**：检查是否配了 `default_egress`（它会兜底所有未命中 route 的目标）。
-- **顺序**：`routes` 数组 first-match-wins；未命中再用 `default_egress`，没有则直连。见
+- **本该直连却走了上游**：检查 `default_action` 是不是 egress（它会兜底所有未命中 route 的目标）。
+- **本该放行却被拒绝**：检查 `default_action` 是不是 `{"type":"block"}`（deny-by-default 策略只
+  能到达 route 里列出的目标）。
+- **顺序**：`routes` 数组 first-match-wins；未命中再执行 `default_action`，没有则直连。见
   [数据模型](./data-model.md)。
 - 日志里 `decision` 会显示实际走向：`direct` / `block` / `upstream:<addr>` / `reverse:<hop_id>` /
   `chain:<id>`。

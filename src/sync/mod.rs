@@ -973,7 +973,7 @@ mod tests {
                     "e": {"type": "upstream", "backend": {"kind": "http", "addr": "p.example:8443"}}
                 },
                 "routing_policies": {
-                    "p": {"routes": [], "default_egress": "e"}
+                    "p": {"routes": [], "default_action": {"type": "egress", "egress": "e"}}
                 },
                 "users": {"bob": {"password": "pw", "policy": "p"}}
             }"#,

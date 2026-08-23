@@ -164,18 +164,21 @@ pub struct RawUser {
     pub frontends: HashMap<String, RawFrontendCred>,
 }
 
-/// One named routing policy: an ordered first-match route list plus an optional
-/// default egress used when no route matches. An empty route list is legal (the
-/// policy is then just its `default_egress`, or direct when that is absent).
+/// One named routing policy: an ordered first-match route list plus the action
+/// to take when no route matches. An empty route list is legal (the policy is
+/// then just its `default_action`).
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct RawRoutingPolicy {
     #[serde(default)]
     pub routes: Vec<RawRoute>,
-    /// Egress id used when no route matches. Absent = direct. A dangling
-    /// reference fails compilation (fail closed).
-    #[serde(default)]
-    pub default_egress: Option<String>,
+    /// Action applied when no route matches. Absent = direct, which keeps a
+    /// route-less policy a plain authenticated pass-through. Set
+    /// `{"type":"block"}` for a deny-by-default policy that only reaches the
+    /// destinations its routes name. A dangling egress reference fails
+    /// compilation (fail closed).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_action: Option<RawAction>,
 }
 
 /// One route: a non-empty selector list (domain / IP / CIDR / `book:` rules)
@@ -189,7 +192,7 @@ pub struct RawRoute {
     pub action: RawAction,
 }
 
-/// Strict internally-tagged route action — exactly one of
+/// Strict internally-tagged action — exactly one of
 /// `{"type":"egress","egress":"<id>"}`, `{"type":"direct"}`, `{"type":"block"}`.
 ///
 /// Decoded through [`RawActionWire`] (serde's own `deny_unknown_fields` does not
@@ -219,23 +222,23 @@ impl TryFrom<RawActionWire> for RawAction {
         match w.kind.as_str() {
             "egress" => {
                 let egress = w.egress.ok_or_else(|| {
-                    "route action type \"egress\" requires an \"egress\" id".to_string()
+                    "action type \"egress\" requires an \"egress\" id".to_string()
                 })?;
                 Ok(RawAction::Egress { egress })
             }
             "direct" => {
                 if w.egress.is_some() {
-                    return Err("route action type \"direct\" must not set \"egress\"".to_string());
+                    return Err("action type \"direct\" must not set \"egress\"".to_string());
                 }
                 Ok(RawAction::Direct)
             }
             "block" => {
                 if w.egress.is_some() {
-                    return Err("route action type \"block\" must not set \"egress\"".to_string());
+                    return Err("action type \"block\" must not set \"egress\"".to_string());
                 }
                 Ok(RawAction::Block)
             }
-            other => Err(format!("unknown route action type {other:?}")),
+            other => Err(format!("unknown action type {other:?}")),
         }
     }
 }
@@ -467,23 +470,23 @@ struct Route {
     action: RouteAction,
 }
 
-/// Compiled routing policy: ordered first-match routes plus an
-/// optional default egress. Absent default = direct.
+/// Compiled routing policy: ordered first-match routes plus the action taken
+/// when nothing matches.
 struct RoutingPolicy {
     routes: Vec<Route>,
-    default_egress: Option<std::sync::Arc<Egress>>,
+    default_action: RouteAction,
     index: RouteIndex,
 }
 
 impl RoutingPolicy {
-    fn from_routes(routes: Vec<Route>, default_egress: Option<std::sync::Arc<Egress>>) -> Self {
+    fn from_routes(routes: Vec<Route>, default_action: RouteAction) -> Self {
         let mut index = RouteIndex::default();
         for (idx, route) in routes.iter().enumerate() {
             route.selectors.index_into(idx as u32, &mut index);
         }
         RoutingPolicy {
             routes,
-            default_egress,
+            default_action,
             index,
         }
     }
@@ -678,20 +681,9 @@ impl Snapshot {
             if id.trim().is_empty() {
                 anyhow::bail!("routing policy id is required");
             }
-            let default_egress = match raw_policy.default_egress {
-                Some(egress_id) => {
-                    let egress_id = egress_id.trim();
-                    anyhow::ensure!(
-                        !egress_id.is_empty(),
-                        "policy {id}: default_egress id is required"
-                    );
-                    Some(egresses.get(egress_id).cloned().ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "policy {id}: default_egress references unknown egress {egress_id:?}"
-                        )
-                    })?)
-                }
-                None => None,
+            let default_action = match raw_policy.default_action {
+                Some(action) => compile_action(action, &egresses, &format!("policy {id} default"))?,
+                None => RouteAction::Direct,
             };
 
             let mut routes = Vec::with_capacity(raw_policy.routes.len());
@@ -719,29 +711,18 @@ impl Snapshot {
                     MAX_ADDRBOOK_SELECTOR_BYTES,
                 )
                 .map_err(|e| anyhow::anyhow!("policy {id} route {idx}: selectors: {e}"))?;
-                let action = match raw_route.action {
-                    RawAction::Egress { egress } => {
-                        let egress = egress.trim();
-                        anyhow::ensure!(
-                            !egress.is_empty(),
-                            "policy {id} route {idx}: egress action requires an egress id"
-                        );
-                        RouteAction::Egress(egresses.get(egress).cloned().ok_or_else(|| {
-                            anyhow::anyhow!(
-                                "policy {id} route {idx}: references unknown egress {egress:?}"
-                            )
-                        })?)
-                    }
-                    RawAction::Direct => RouteAction::Direct,
-                    RawAction::Block => RouteAction::Block,
-                };
+                let action = compile_action(
+                    raw_route.action,
+                    &egresses,
+                    &format!("policy {id} route {idx}"),
+                )?;
                 routes.push(Route {
                     selectors,
                     selector_rules: raw_route.selectors,
                     action,
                 });
             }
-            policies.insert(id, RoutingPolicy::from_routes(routes, default_egress));
+            policies.insert(id, RoutingPolicy::from_routes(routes, default_action));
         }
 
         let mut users = HashMap::with_capacity(raw_users.len());
@@ -858,14 +839,17 @@ impl Snapshot {
         if let Some(action) = requested_action {
             return resolved(self.route_action_decision(action), requested_host);
         }
-        if let Some(default_egress) = &policy.default_egress {
-            return resolved(default_egress.decision(), requested_host);
-        }
-        resolved(Decision::Direct, requested_host)
+        // Nothing matched: the policy's own default decides. Absent in the
+        // snapshot it compiles to Direct, so a route-less policy stays a plain
+        // authenticated pass-through; a policy that sets `{"type":"block"}`
+        // reaches only the destinations its routes name.
+        resolved(
+            self.route_action_decision(&policy.default_action),
+            requested_host,
+        )
     }
 
-    /// Map a compiled route action to a decision. `Block` is unreachable here —
-    /// callers veto it before selection.
+    /// Map a compiled action to a decision.
     fn route_action_decision(&self, action: &RouteAction) -> Decision {
         match action {
             RouteAction::Egress(egress) => egress.decision(),
@@ -914,21 +898,29 @@ pub struct UserPolicyView {
 
 /// Credential-free view of a routing policy: its id, ordered routes (each with
 /// its selectors, action type and — for an egress action — the credential-free
-/// egress realization) and an optional default egress.
+/// egress realization) and the action taken when no route matches.
 #[derive(Debug, Clone, Serialize)]
 pub struct RoutingPolicyView {
     pub id: String,
     pub routes: Vec<RouteView>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub default_egress: Option<EgressView>,
+    /// Always present, so an operator inspecting a policy sees what an
+    /// unmatched destination actually does instead of inferring it from a
+    /// missing field.
+    pub default_action: ActionView,
 }
 
-/// Credential-free view of one route: its selectors, action type
-/// (`"egress"`/`"direct"`/`"block"`) and — for an egress action — the resolved
-/// egress realization.
+/// Credential-free view of one route: its selectors plus its flattened action.
 #[derive(Debug, Clone, Serialize)]
 pub struct RouteView {
     pub selectors: Vec<String>,
+    #[serde(flatten)]
+    pub action: ActionView,
+}
+
+/// Credential-free view of one action: its type (`"egress"`/`"direct"`/
+/// `"block"`) and — for an egress action — the resolved egress realization.
+#[derive(Debug, Clone, Serialize)]
+pub struct ActionView {
     pub action: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub egress: Option<EgressView>,
@@ -948,23 +940,28 @@ impl RoutingPolicyView {
         RoutingPolicyView {
             id: id.to_string(),
             routes: policy.routes.iter().map(RouteView::build).collect(),
-            default_egress: policy.default_egress.as_ref().map(|e| e.view()),
+            default_action: ActionView::build(&policy.default_action),
         }
     }
 }
 
 impl RouteView {
     fn build(route: &Route) -> Self {
-        let (action, egress) = match &route.action {
+        RouteView {
+            selectors: route.selector_rules.clone(),
+            action: ActionView::build(&route.action),
+        }
+    }
+}
+
+impl ActionView {
+    fn build(action: &RouteAction) -> Self {
+        let (action, egress) = match action {
             RouteAction::Egress(egress) => ("egress".to_string(), Some(egress.view())),
             RouteAction::Direct => ("direct".to_string(), None),
             RouteAction::Block => ("block".to_string(), None),
         };
-        RouteView {
-            selectors: route.selector_rules.clone(),
-            action,
-            egress,
-        }
+        ActionView { action, egress }
     }
 }
 
@@ -1107,6 +1104,36 @@ fn compile_upstream(context: &str, u: RawUpstream) -> anyhow::Result<Upstream> {
         tls: u.tls,
         skip_cert_verify: u.skip_cert_verify,
     })
+}
+
+/// Resolve one wire action against the compiled egress table. Shared by routes
+/// and by a policy's `default_action` so both reject a blank or dangling egress
+/// id identically — an action that cannot be resolved must never compile into a
+/// snapshot that silently falls back to direct.
+///
+/// `context` prefixes the error so an operator can find the offending route
+/// ("policy p route 3") or default ("policy p default").
+fn compile_action(
+    action: RawAction,
+    egresses: &HashMap<String, std::sync::Arc<Egress>>,
+    context: &str,
+) -> anyhow::Result<RouteAction> {
+    match action {
+        RawAction::Egress { egress } => {
+            let egress = egress.trim();
+            anyhow::ensure!(
+                !egress.is_empty(),
+                "{context}: egress action requires an egress id"
+            );
+            Ok(RouteAction::Egress(
+                egresses.get(egress).cloned().ok_or_else(|| {
+                    anyhow::anyhow!("{context}: references unknown egress {egress:?}")
+                })?,
+            ))
+        }
+        RawAction::Direct => Ok(RouteAction::Direct),
+        RawAction::Block => Ok(RouteAction::Block),
+    }
 }
 
 /// Validate and compile one failover chain from its members: non-empty id, at
@@ -1280,8 +1307,12 @@ pub(crate) mod test_support {
     pub(crate) struct PolicySpec {
         /// Backend for hosts matched by `routed`. `None` = no egress route is emitted.
         pub(crate) egress: Option<RawUpstream>,
-        /// Backend used when no route matches. `None` = direct.
+        /// Backend used when no route matches. `None` = direct unless
+        /// `deny_by_default` is set.
         pub(crate) default_egress: Option<RawUpstream>,
+        /// Block every destination no route names. Mutually exclusive with
+        /// `default_egress`.
+        pub(crate) deny_by_default: bool,
         /// Selectors routed through `egress`.
         pub(crate) routed: Vec<String>,
         /// Selectors denied outright.
@@ -1317,16 +1348,24 @@ pub(crate) mod test_support {
                     });
                 }
             }
-            let default_egress = self.default_egress.map(|backend| {
-                let egress_id = format!("{id}-default");
-                egresses.insert(egress_id.clone(), RawEgress::Upstream { backend });
-                egress_id
-            });
+            assert!(
+                !(self.deny_by_default && self.default_egress.is_some()),
+                "PolicySpec {id:?}: deny_by_default and default_egress disagree"
+            );
+            let default_action = match (self.default_egress, self.deny_by_default) {
+                (Some(backend), _) => {
+                    let egress_id = format!("{id}-default");
+                    egresses.insert(egress_id.clone(), RawEgress::Upstream { backend });
+                    Some(RawAction::Egress { egress: egress_id })
+                }
+                (None, true) => Some(RawAction::Block),
+                (None, false) => None,
+            };
 
             (
                 RawRoutingPolicy {
                     routes,
-                    default_egress,
+                    default_action,
                 },
                 egresses,
             )
@@ -1517,9 +1556,8 @@ mod tests {
                 tls: false,
                 skip_cert_verify: false,
             }),
-            default_egress: None,
             routed: vec!["example.com".to_string()],
-            blocked: Vec::new(),
+            ..Default::default()
         }
         .into_tables("reverse-egress");
         let raw = RawSnapshot {
@@ -1748,13 +1786,7 @@ mod tests {
 
     #[test]
     fn compile_rejects_an_empty_policy_id() {
-        let (routing_policies, egresses) = PolicySpec {
-            egress: None,
-            default_egress: None,
-            routed: Vec::new(),
-            blocked: Vec::new(),
-        }
-        .into_tables(" ");
+        let (routing_policies, egresses) = PolicySpec::default().into_tables(" ");
 
         let err = Snapshot::compile(
             RawSnapshot {
@@ -1863,6 +1895,196 @@ mod tests {
         );
     }
 
+    /// A deny-by-default policy: routes name the destinations the identity may
+    /// reach and everything else is refused. Before `default_action` this could
+    /// not be expressed at all — there is no catch-all selector, so an unmatched
+    /// destination always fell through to direct.
+    #[test]
+    fn a_deny_by_default_policy_blocks_every_unnamed_destination() {
+        let mut users = HashMap::new();
+        users.insert(
+            "svc".to_string(),
+            RawUser {
+                password: "secret".to_string(),
+                expire: None,
+                up_rate: 0,
+                down_rate: 0,
+                max_connections: 0,
+                policy: "allowlist".to_string(),
+                frontends: Default::default(),
+            },
+        );
+        let (routing_policies, egresses) = PolicySpec {
+            egress: Some(raw_upstream("socks5", "eu-hop.example.com:1080")),
+            routed: vec!["api.openai.com".to_string()],
+            deny_by_default: true,
+            ..Default::default()
+        }
+        .into_tables("allowlist");
+        let snap = Snapshot::compile(
+            RawSnapshot {
+                version: 1,
+                users,
+                routing_policies,
+                egresses,
+                ..Default::default()
+            },
+            "node-1",
+        )
+        .unwrap();
+
+        // The named destination still routes through its egress.
+        match snap.decide("svc", "api.openai.com") {
+            Decision::Via(up) => assert_eq!(up.addr, "eu-hop.example.com:1080"),
+            other => panic!("expected the routed egress, got {other:?}"),
+        }
+        // Everything else is refused rather than silently going direct.
+        assert!(matches!(
+            snap.decide("svc", "evil.example.com"),
+            Decision::Block
+        ));
+        assert!(matches!(
+            snap.decide("svc", "198.51.100.7"),
+            Decision::Block
+        ));
+        // A sniffed host is judged by the same default. Neither host matched a
+        // route, so the requested address stays the effective policy host.
+        let sniffed = snap.decide_with_sniff("svc", "198.51.100.7", Some("other.example.com"));
+        assert!(matches!(sniffed.decision, Decision::Block));
+        assert_eq!(sniffed.effective_policy_host, "198.51.100.7");
+        // A sniffed host that DOES match a route still wins over the default.
+        let sniffed_hit = snap.decide_with_sniff("svc", "198.51.100.7", Some("api.openai.com"));
+        match sniffed_hit.decision {
+            Decision::Via(up) => assert_eq!(up.addr, "eu-hop.example.com:1080"),
+            other => panic!("expected the routed egress, got {other:?}"),
+        }
+        assert_eq!(sniffed_hit.effective_policy_host, "api.openai.com");
+    }
+
+    /// Absence of `default_action` keeps the historical behaviour: an
+    /// authenticated identity with no matching route goes direct.
+    #[test]
+    fn a_policy_without_a_default_action_falls_through_to_direct() {
+        let raw = RawSnapshot {
+            version: 1,
+            users: HashMap::from([(
+                "alice".to_string(),
+                RawUser {
+                    password: "secret".to_string(),
+                    expire: None,
+                    up_rate: 0,
+                    down_rate: 0,
+                    max_connections: 0,
+                    policy: "plain".to_string(),
+                    frontends: Default::default(),
+                },
+            )]),
+            routing_policies: HashMap::from([(
+                "plain".to_string(),
+                RawRoutingPolicy {
+                    routes: Vec::new(),
+                    default_action: None,
+                },
+            )]),
+            ..Default::default()
+        };
+        let snap = Snapshot::compile(raw, "node-1").unwrap();
+        assert!(matches!(
+            snap.decide("alice", "anything.example.com"),
+            Decision::Direct
+        ));
+        // The view still spells the default out instead of omitting it.
+        let view = snap.user_policy("alice").expect("alice resolves");
+        let routing = view.routing_policy.expect("routing present");
+        assert_eq!(routing.default_action.action, "direct");
+        assert!(routing.default_action.egress.is_none());
+    }
+
+    /// `default_action` shares the route decoder, so a blank or dangling egress
+    /// id is rejected at compile time in both positions — a broken default must
+    /// never compile into a snapshot that quietly serves direct.
+    #[test]
+    fn compile_rejects_a_default_action_with_a_blank_egress_id() {
+        let raw = RawSnapshot {
+            version: 1,
+            users: HashMap::new(),
+            routing_policies: HashMap::from([(
+                "p".to_string(),
+                RawRoutingPolicy {
+                    routes: Vec::new(),
+                    default_action: Some(RawAction::Egress {
+                        egress: "   ".to_string(),
+                    }),
+                },
+            )]),
+            ..Default::default()
+        };
+        let err = Snapshot::compile(raw, "n").err().expect("must be rejected");
+        assert!(
+            err.to_string()
+                .contains("policy p default: egress action requires an egress id"),
+            "error was {err}"
+        );
+    }
+
+    /// An unknown `type` in a default action is refused by the same strict
+    /// decoder the routes use.
+    #[test]
+    fn decode_rejects_an_unknown_default_action_type() {
+        let err = serde_json::from_str::<RawRoutingPolicy>(
+            r#"{"routes": [], "default_action": {"type": "allow"}}"#,
+        )
+        .expect_err("must be rejected");
+        assert!(
+            err.to_string().contains("unknown action type"),
+            "error was {err}"
+        );
+    }
+
+    /// The wire form of a route is unchanged by the shared `ActionView`: its
+    /// action stays flattened next to `selectors`, while a policy's default is
+    /// a nested object.
+    #[test]
+    fn the_policy_view_keeps_route_actions_flat_and_nests_the_default() {
+        let mut users = HashMap::new();
+        users.insert(
+            "svc".to_string(),
+            RawUser {
+                password: "secret".to_string(),
+                expire: None,
+                up_rate: 0,
+                down_rate: 0,
+                max_connections: 0,
+                policy: "allowlist".to_string(),
+                frontends: Default::default(),
+            },
+        );
+        let (routing_policies, egresses) = PolicySpec {
+            egress: Some(raw_upstream("socks5", "eu-hop.example.com:1080")),
+            routed: vec!["api.openai.com".to_string()],
+            deny_by_default: true,
+            ..Default::default()
+        }
+        .into_tables("allowlist");
+        let snap = Snapshot::compile(
+            RawSnapshot {
+                version: 1,
+                users,
+                routing_policies,
+                egresses,
+                ..Default::default()
+            },
+            "node-1",
+        )
+        .unwrap();
+        let view = snap.user_policy("svc").expect("svc resolves");
+        let json = serde_json::to_value(view.routing_policy.expect("routing present")).unwrap();
+        assert_eq!(json["routes"][0]["action"], "egress");
+        assert_eq!(json["routes"][0]["egress"]["id"], "allowlist-egress");
+        assert_eq!(json["default_action"]["action"], "block");
+        assert!(json["default_action"].get("egress").is_none());
+    }
+
     #[test]
     fn decide_prefers_a_matched_route_egress_over_the_default_egress() {
         let mut users = HashMap::new();
@@ -1900,6 +2122,7 @@ mod tests {
                 "blocked.example.com".to_string(),
                 "203.0.113.0/24".to_string(),
             ],
+            ..Default::default()
         }
         .into_tables("split-exit");
         let snap = Snapshot::compile(
@@ -2072,7 +2295,7 @@ mod tests {
                                 egress: "hop".to_string(),
                             },
                         }],
-                        default_egress: None,
+                        default_action: None,
                     },
                 )]),
                 egresses: HashMap::from([(
@@ -2128,7 +2351,7 @@ mod tests {
                             egress: "jp-pop".to_string(),
                         },
                     }],
-                    default_egress: None,
+                    default_action: None,
                 },
             )]),
             egresses: HashMap::from([("jp-pop".to_string(), jp_pop_chain())]),
@@ -2178,7 +2401,9 @@ mod tests {
         let mut raw = chain_snapshot();
         let policy = raw.routing_policies.get_mut("rule-a").unwrap();
         policy.routes.clear();
-        policy.default_egress = Some("jp-pop".to_string());
+        policy.default_action = Some(RawAction::Egress {
+            egress: "jp-pop".to_string(),
+        });
         let snap = Snapshot::compile(raw, "n").expect("compiles");
         assert!(matches!(
             snap.decide("alice", "anything.example.net"),
@@ -2205,11 +2430,13 @@ mod tests {
         raw.routing_policies
             .get_mut("rule-a")
             .unwrap()
-            .default_egress = Some("no-such".to_string());
+            .default_action = Some(RawAction::Egress {
+            egress: "no-such".to_string(),
+        });
         let err = Snapshot::compile(raw, "n").err().expect("must be rejected");
         assert!(
             err.to_string()
-                .contains("default_egress references unknown egress"),
+                .contains("default: references unknown egress"),
             "error was {err}"
         );
     }
@@ -2383,7 +2610,11 @@ mod tests {
         let view = snap.user_policy("alice").expect("resolves");
         assert_eq!(view.policy, "rule-a");
         let policy = view.routing_policy.as_ref().expect("policy resolved");
-        let egress = policy.routes[0].egress.as_ref().expect("egress realized");
+        let egress = policy.routes[0]
+            .action
+            .egress
+            .as_ref()
+            .expect("egress realized");
         let upstream = &egress.upstream;
         assert_eq!(upstream.kind, "chain");
         assert_eq!(upstream.addr, "jp-pop");
@@ -2416,7 +2647,7 @@ mod tests {
             "edge".to_string(),
             RawRoutingPolicy {
                 routes,
-                default_egress: None,
+                default_action: None,
             },
         );
         Snapshot::compile(

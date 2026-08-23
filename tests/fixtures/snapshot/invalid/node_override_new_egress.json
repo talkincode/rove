@@ -4,7 +4,7 @@
   "egresses": {
     "e": { "type": "upstream", "backend": { "kind": "http", "addr": "p.example:8443" } }
   },
-  "routing_policies": { "p": { "routes": [], "default_egress": "e" } },
+  "routing_policies": { "p": { "routes": [], "default_action": { "type": "egress", "egress": "e" } } },
   "users": { "u": { "password": "x", "policy": "p" } },
   "node_overrides": {
     "edge-1": {

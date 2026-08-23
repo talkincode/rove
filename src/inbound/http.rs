@@ -1469,13 +1469,7 @@ mod tests {
                 frontends: Default::default(),
             },
         );
-        let (routing_policies, egresses) = PolicySpec {
-            egress: None,
-            default_egress: None,
-            routed: Vec::new(),
-            blocked: Vec::new(),
-        }
-        .into_tables("open");
+        let (routing_policies, egresses) = PolicySpec::default().into_tables("open");
         let engine = Engine::new();
         engine.replace(
             Snapshot::compile(
@@ -1562,7 +1556,7 @@ mod tests {
     }
 
     fn engine_with_chain(members: Vec<(&str, u32, &str, String)>) -> Arc<Engine> {
-        use crate::model::{RawChainMember, RawEgress, RawRoutingPolicy, RawUpstream};
+        use crate::model::{RawAction, RawChainMember, RawEgress, RawRoutingPolicy, RawUpstream};
         let mut users = HashMap::new();
         users.insert(
             "alice".to_string(),
@@ -1580,7 +1574,9 @@ mod tests {
             "chained".to_string(),
             RawRoutingPolicy {
                 routes: Vec::new(),
-                default_egress: Some("jp-pop".to_string()),
+                default_action: Some(RawAction::Egress {
+                    egress: "jp-pop".to_string(),
+                }),
             },
         )]);
         let egresses = HashMap::from([(
@@ -1737,13 +1733,7 @@ mod tests {
                 frontends: Default::default(),
             },
         );
-        let (routing_policies, egresses) = PolicySpec {
-            egress: None,
-            default_egress: None,
-            routed: Vec::new(),
-            blocked: Vec::new(),
-        }
-        .into_tables("open");
+        let (routing_policies, egresses) = PolicySpec::default().into_tables("open");
         let engine = Engine::new();
         engine.replace(
             Snapshot::compile(

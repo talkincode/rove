@@ -213,7 +213,7 @@ fn overlapping_routes_resolve_in_declaration_order() {
 }
 
 #[test]
-fn default_egress_applies_when_no_route_matches() {
+fn default_action_applies_when_no_route_matches() {
     let snap = compile_main("edge-0");
     assert_eq!(
         via_addr(&snap.decide("alice", "unmatched.example.org")),
@@ -224,7 +224,7 @@ fn default_egress_applies_when_no_route_matches() {
 #[test]
 fn policy_without_routes_or_default_is_direct() {
     let snap = compile_main("edge-0");
-    // `dana` -> policy-direct-default (empty routes, no default_egress).
+    // `dana` -> policy-direct-default (empty routes, no default_action).
     assert!(matches!(
         snap.decide("dana", "anything.example.com"),
         Decision::Direct
@@ -233,7 +233,7 @@ fn policy_without_routes_or_default_is_direct() {
 }
 
 #[test]
-fn policy_default_egress_only_covers_unmatched() {
+fn policy_default_action_only_covers_unmatched() {
     let snap = compile_main("edge-0");
     // `evan` -> policy-default-egress: a block route plus default egress-a.
     assert!(matches!(
@@ -244,6 +244,47 @@ fn policy_default_egress_only_covers_unmatched() {
         via_addr(&snap.decide("evan", "elsewhere.example.com")),
         "proxy-a.example:8443"
     );
+}
+
+/// The deny-by-default shape an egress plane actually wants: routes enumerate
+/// the destinations an identity may reach and `default_action` refuses the
+/// rest. Without a policy-level default this is not expressible — there is no
+/// catch-all selector, so an unmatched destination would fall through to
+/// direct and quietly turn an allowlist into a pass-through.
+#[test]
+fn a_deny_by_default_policy_only_reaches_the_destinations_it_names() {
+    let snap = compile_main("edge-0");
+    // `frida` -> policy-allowlist.
+    assert_eq!(
+        via_addr(&snap.decide("frida", "api.openai.com")),
+        "proxy-a.example:8443"
+    );
+    // An explicit direct route is still honoured under a blocking default.
+    assert!(matches!(snap.decide("frida", "10.1.2.3"), Decision::Direct));
+    // Everything the policy does not name is refused, by name and by address.
+    assert!(matches!(
+        snap.decide("frida", "api.anthropic.com"),
+        Decision::Block
+    ));
+    assert!(matches!(
+        snap.decide("frida", "203.0.113.9"),
+        Decision::Block
+    ));
+    // Sniffing does not open a hole: an unnamed sniffed host is still refused.
+    let sniffed = snap.decide_with_sniff("frida", "203.0.113.9", Some("unnamed.example.com"));
+    assert!(matches!(sniffed.decision, Decision::Block));
+}
+
+/// The credential-free view spells the blocking default out, so an operator
+/// auditing an allowlist policy can see it is closed rather than infer it.
+#[test]
+fn the_policy_view_surfaces_a_blocking_default() {
+    let snap = compile_main("edge-0");
+    let view = snap.user_policy("frida").expect("frida resolves");
+    let routing = view.routing_policy.expect("routing present");
+    assert_eq!(routing.id, "policy-allowlist");
+    assert_eq!(routing.default_action.action, "block");
+    assert!(routing.default_action.egress.is_none());
 }
 
 #[test]
@@ -332,7 +373,7 @@ fn requested_ip_uses_non_block_sniffed_action_first() {
 }
 
 #[test]
-fn requested_ip_with_no_route_falls_back_to_default_egress() {
+fn requested_ip_with_no_route_falls_back_to_the_default_action() {
     let snap = compile_main("edge-0");
     let out = snap.decide_with_sniff("alice", "1.2.3.4", None);
     assert_eq!(via_addr(&out.decision), "proxy-b.example:1080");
@@ -403,20 +444,26 @@ fn user_policy_view_exposes_routing_without_secrets() {
     let routing = view
         .routing_policy
         .as_ref()
-        .expect("v4 snapshot exposes routing_policy");
+        .expect("snapshot exposes routing_policy");
     assert_eq!(routing.id, "policy-main");
     // Ordered routes are preserved with their action type strings.
-    assert_eq!(routing.routes[0].action, "block");
-    assert_eq!(routing.routes[1].action, "egress");
-    assert_eq!(routing.routes[4].action, "direct");
+    assert_eq!(routing.routes[0].action.action, "block");
+    assert_eq!(routing.routes[1].action.action, "egress");
+    assert_eq!(routing.routes[4].action.action, "direct");
     // The named egress id is surfaced for an egress action.
     let egress_view = routing.routes[1]
+        .action
         .egress
         .as_ref()
         .expect("egress realization");
     assert_eq!(egress_view.id, "egress-a");
-    // The default egress is surfaced too.
-    assert_eq!(routing.default_egress.as_ref().unwrap().id, "egress-b");
+    // The default action is always surfaced, so an operator reading the view
+    // sees what an unmatched destination does without inferring it.
+    assert_eq!(routing.default_action.action, "egress");
+    assert_eq!(
+        routing.default_action.egress.as_ref().unwrap().id,
+        "egress-b"
+    );
 
     // The identity names the policy it is bound to.
     assert_eq!(view.policy, "policy-main");
@@ -448,8 +495,9 @@ fn user_policy_view_for_chain_egress_lists_members_without_secrets() {
     let routing = view.routing_policy.expect("routing present");
     // Route 3 (index 3) is the chain egress.
     let chain_route = &routing.routes[3];
-    assert_eq!(chain_route.action, "egress");
+    assert_eq!(chain_route.action.action, "egress");
     let egress = chain_route
+        .action
         .egress
         .as_ref()
         .expect("chain egress realization");
@@ -492,7 +540,7 @@ fn strict_rejections_fail_closed() {
         "invalid/egress_chain_backend.json",
         "invalid/missing_policy.json",
         "invalid/missing_egress.json",
-        "invalid/dangling_default_egress.json",
+        "invalid/dangling_default_action.json",
     ] {
         let doc = decode_snapshot(&read_fixture(name))
             .unwrap_or_else(|e| panic!("fixture {name} should decode: {e:?}"));

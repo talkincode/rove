@@ -163,10 +163,8 @@ async fn http_connect_to_book_blocked_category_is_rejected() {
     let engine = Engine::new();
     engine.replace(snapshot_with_book(
         PolicySpec {
-            egress: None,
-            default_egress: None,
-            routed: Vec::new(),
             blocked: vec!["book:blocked-nets".to_string()],
+            ..Default::default()
         },
         &book,
     ));
@@ -190,10 +188,8 @@ async fn http_connect_passes_when_book_category_not_selected() {
     // tunnel must actually move bytes end to end.
     engine.replace(snapshot_with_book(
         PolicySpec {
-            egress: None,
-            default_egress: None,
-            routed: Vec::new(),
             blocked: vec!["book:harmless".to_string()],
+            ..Default::default()
         },
         &book,
     ));
@@ -221,10 +217,8 @@ fn book_domain_block_applies_to_requested_host() {
     let book = loopback_book();
     let snap = snapshot_with_book(
         PolicySpec {
-            egress: None,
-            default_egress: None,
-            routed: Vec::new(),
             blocked: vec!["book:blocked-nets".to_string()],
+            ..Default::default()
         },
         &book,
     );
@@ -246,10 +240,8 @@ fn book_domain_block_applies_to_requested_host() {
 fn snapshot_with_unknown_book_category_is_rejected() {
     let book = loopback_book();
     let raw = raw_snapshot(PolicySpec {
-        egress: None,
-        default_egress: None,
-        routed: Vec::new(),
         blocked: vec!["book:does-not-exist".to_string()],
+        ..Default::default()
     });
     let err = Snapshot::compile_with_book(raw, "node-1", Some(&book))
         .err()
@@ -261,10 +253,8 @@ fn snapshot_with_unknown_book_category_is_rejected() {
 #[test]
 fn snapshot_with_book_rules_but_no_book_is_rejected() {
     let raw = raw_snapshot(PolicySpec {
-        egress: None,
-        default_egress: None,
-        routed: Vec::new(),
         blocked: vec!["book:google".to_string()],
+        ..Default::default()
     });
     let err = Snapshot::compile(raw, "node-1")
         .err()
@@ -365,10 +355,8 @@ async fn addrbook_swap_recompiles_snapshot_atomically_and_rejects_bad_books() {
     let engine = Engine::new();
     let cache = temp_path("swap-cache.json");
     let raw = raw_snapshot(PolicySpec {
-        egress: None,
-        default_egress: None,
-        routed: Vec::new(),
         blocked: vec!["book:streaming".to_string()],
+        ..Default::default()
     });
     std::fs::write(&cache, serde_json::to_vec(&raw).unwrap()).unwrap();
     let syncer = test_syncer(engine.clone(), service.clone(), &cache);
@@ -426,12 +414,7 @@ async fn addrbook_swap_recompiles_snapshot_atomically_and_rejects_bad_books() {
 
     // Once policy no longer references the removed category, the unchanged v3
     // candidate can be retried and acknowledged.
-    let compatible = raw_snapshot(PolicySpec {
-        egress: None,
-        default_egress: None,
-        routed: Vec::new(),
-        blocked: Vec::new(),
-    });
+    let compatible = raw_snapshot(PolicySpec::default());
     std::fs::write(&cache, serde_json::to_vec(&compatible).unwrap()).unwrap();
     assert!(syncer.load_cache().success);
     let (retry, retry_stamp) = service.try_read_new().unwrap();

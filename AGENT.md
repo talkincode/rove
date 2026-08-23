@@ -90,7 +90,9 @@ Rove 是公开的应用网络优化器：一个轻量单体正向代理，内置
 - 全部 wire 结构都是 `deny_unknown_fields`：含未知字段或异形的文档整份拒收，绝不半懂半猜地编译。
   新增语义字段必须配合 schema/capability 门控发布，因为不支持该字段的旧节点会明确拒收。
 - 用户通过 `policy` 绑定一条 routing policy；route 按数组顺序 first-match-wins；
-  未命中用 `default_egress`，没有则直连。
+  未命中执行 policy 的 `default_action`（`egress` / `direct` / `block`），没有则直连。
+  `default_action: {"type":"block"}` 是表达 deny-by-default 策略的唯一方式——选择器没有
+  catch-all 写法。
 - `node_overrides` 只能整项替换 base `egresses` 里已存在的同名 egress，不能新增 node-only
   egress，也不能改 policy —— route 表在全网必须是同一份。
 - `version` 必须单调递增。`304` 或 `version <= since` 表示不替换当前快照。

@@ -13,7 +13,7 @@
 client ──► rove (认证 + 直连) ──► 目标
 ```
 
-- 每个用户绑定一个无 route、无 `default_egress` 的 routing policy。
+- 每个用户绑定一个无 route、无 `default_action` 的 routing policy。
 - 决策全部落到「直连」。
 
 ```jsonc
@@ -77,7 +77,9 @@ client ──► rove ┤
    }
    ```
 
-命中 route 的走 hop，其余直连。想「全量走上游」就给 policy 配 `default_egress`，不必再写 catch-all route。
+命中 route 的走 hop，其余直连。想「全量走上游」就把 policy 的 `default_action` 配成
+`{"type":"egress","egress":"<id>"}`，不必再写 catch-all route；想「只放行清单内目标」就配成
+`{"type":"block"}`，未列出的目标一律拒绝。
 
 ---
 

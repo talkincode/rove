@@ -154,9 +154,12 @@ Rove_HOP_MQTT_PASSWORD=... rove-hop --socks5 0.0.0.0:1080 \
         },
         {"selectors": ["full:private.example"], "action": "direct"}
       ],
-      "default_egress": {
-        "id": "backup",
-        "upstream": {"kind": "reverse", "addr": "tokyo-hop", "tls": false, "auth": false}
+      "default_action": {
+        "action": "egress",
+        "egress": {
+          "id": "backup",
+          "upstream": {"kind": "reverse", "addr": "tokyo-hop", "tls": false, "auth": false}
+        }
       }
     }
   },
@@ -167,10 +170,14 @@ Rove_HOP_MQTT_PASSWORD=... rove-hop --socks5 0.0.0.0:1080 \
 字段语义：
 
 - `policy`：该身份绑定的 routing policy **ID**（字符串）。
-- `routing_policy`：解析后的脱敏策略对象——policy ID、有序 `routes`，以及可选的
-  `default_egress`。route 顺序与快照一致，就是 first-match-wins 的求解顺序。
+- `routing_policy`：解析后的脱敏策略对象——policy ID、有序 `routes`，以及 `default_action`。
+  route 顺序与快照一致，就是 first-match-wins 的求解顺序。
 - `routes[].action` 为 `"egress"` / `"direct"` / `"block"` 之一；只有 `"egress"` 会附带
   `egress` 对象（命名 egress 的 ID 与脱敏 realization）。
+- `default_action` 是所有 route 都未命中时的行为，**总是存在**：`{"action": "direct"}`、
+  `{"action": "block"}`（deny-by-default 策略），或 `{"action": "egress", "egress": {...}}`。
+  它不会因为快照里没写 `default_action` 而消失——缺省会显式呈现为 `{"action": "direct"}`，
+  让运维直接看到未命中时的行为，而不必从字段缺失去推断。
 - egress 引用[出口链](./data-model.md)时，`upstream` 呈现为
   `{"kind": "chain", "addr": "<egress-id>", "tls": false, "auth": false, "members": [...]}`；
   `members` 逐个列出成员的 `id`、`priority`、`kind`、`addr`、`tls` 与 `auth: true/false`，
