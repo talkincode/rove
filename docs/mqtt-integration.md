@@ -313,7 +313,7 @@ schema。快照 wire contract 见[快照协议](./snapshot-protocol.md)。
 - `auth`: 认证缺失、认证失败或账号过期。
 - `policy`: 命中 block 策略。
 - `limit`: 超过用户 `max_connections` 活跃隧道限制。
-- `outbound`: direct 或二级代理连接失败。
+- `outbound`: direct 或上游出口连接失败。
 - `reverse_lookup`: 找不到已认证的 reverse hop 会话。
 - `reverse_open`: edge 无法在 reverse hop 上打开目标流。
 - `hop_connect`: reverse hop 无法连接最终目标。
@@ -414,7 +414,7 @@ chain 决策的追踪结果还携带 `egress`（胜出成员的物理出口）�
 - `auth`：认证缺失、失败或账号过期。
 - `policy`：命中 block 策略。
 - `limit`：超过连接数上限。
-- `outbound`：direct、二级代理、chain 或 reverse 出口建立失败；`failure_stage` 会进一步区分 `outbound`、`chain_exhausted`、`reverse_lookup`、`reverse_open` 与 `hop_connect`。
+- `outbound`：direct、上游出口、chain 或 reverse 出口建立失败；`failure_stage` 会进一步区分 `outbound`、`chain_exhausted`、`reverse_lookup`、`reverse_open` 与 `hop_connect`。
 - `splice`：隧道建立后转发失败（`failure_stage` 为 `splice` 或 `stream_io`），或成功隧道（`status` 为 `ok`）。
 
 协议解析阶段（`parse`）不产生诊断事件，仍由一次性拨测追踪覆盖。

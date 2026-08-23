@@ -2,9 +2,9 @@
 
 ## 项目概述
 
-Rove 是开源的应用网络优化器：一个轻量、单体、模块化的正向代理节点。
+Rove 是开源的应用网络优化器：一个轻量、单体、模块化的应用出口节点。
 它服务的是 Agent API、投资交易、SaaS 多云出口、Webhook 固定出口、隔离网段访问等对路径、时延和策略敏感的应用流量。
-节点本地完成前端接入、用户鉴权、策略决策、限速和二级代理连接。仓库可以包含 `rove-hop`、`rove-relay` 等第一方伴生进程，但这些进程必须保持独立部署和窄边界；应用层（模型请求体、成交回报、账单）语义不进入节点热路径。
+节点本地完成前端接入、用户鉴权、策略决策、限速和出口连接。仓库可以包含 `rove-hop`、`rove-relay` 等第一方伴生进程，但这些进程必须保持独立部署和窄边界；应用层（模型请求体、成交回报、账单）语义不进入节点热路径。
 
 节点不持有业务真相。控制面通过 HTTP 下发编译好的用户与策略快照，节点将快照编译为进程内结构并热替换；本地缓存用于离线或控制面不可达时的热启动。当前事实主要由 `README.md`、`Cargo.toml`、`config.example.toml` 和 `src/` 下的实现支撑。
 
@@ -78,7 +78,7 @@ Rove 应该成为一个可以部署在边缘节点上的自包含**应用出口�
 
 - direct、HTTP upstream、SOCKS5 upstream 出站连接
 
-  `src/outbound/mod.rs` 支持直连、HTTP CONNECT 二级代理、SOCKS5 二级代理，并允许 upstream 连接使用 TLS。HTTP upstream 可带 Basic 认证，SOCKS5 upstream 可带用户名密码认证。每个 upstream 可通过 `skip_cert_verify`（默认 `false`）单独关闭 TLS 证书链/主机名/有效期校验，用于自签名证书或纯 IP 的 hop 节点；这是逐个 upstream 的显式开关，不影响入站监听端的 TLS 校验，也不存在全局开关。
+  `src/outbound/mod.rs` 支持直连、HTTP CONNECT 上游出口、SOCKS5 上游出口，并允许 upstream 连接使用 TLS。HTTP upstream 可带 Basic 认证，SOCKS5 upstream 可带用户名密码认证。每个 upstream 可通过 `skip_cert_verify`（默认 `false`）单独关闭 TLS 证书链/主机名/有效期校验，用于自签名证书或纯 IP 的 hop 节点；这是逐个 upstream 的显式开关，不影响入站监听端的 TLS 校验，也不存在全局开关。
 
 - 每用户字节速率限制
 
@@ -124,9 +124,10 @@ Rove 应该成为一个可以部署在边缘节点上的自包含**应用出口�
 
 - 不把节点做成「先堆协议、再补正确性」的厨房水槽。
 
-  当前可靠热路径是 HTTP CONNECT、SOCKS5 与 TUIC。后续将按真实应用场景规划其他主流代理协议
-  （Trojan、VLESS、Hysteria2、AnyTLS 等）：每加一个协议都要有独立的认证命名空间、fail-closed
-  失败路径和 E2E。新协议不得降低现有热路径的正确性与可观测性。
+  当前可靠热路径是 HTTP CONNECT、SOCKS5 与 TUIC，它们是 listener adapter，不是产品本身。
+  新的接入方式必须先证明自己服务的是应用入口，并且有独立的认证命名空间、fail-closed
+  失败路径和 E2E，才能加到 `identity → policy → route → egress` 主干上。
+  不得为了协议清单去引入消费级代理生态的协议或客户端一键配置。
 
 - 不把出口平面做成通用反向代理或 API 网关。
 
@@ -192,15 +193,15 @@ Rove 应该成为一个可以部署在边缘节点上的自包含**应用出口�
 
   节点同时接收 `SIGINT` 与 `SIGTERM`，收到信号后立即停止 TCP、TUIC 与 Subnetra hub 的新接入，并在 `[shutdown].grace_period_secs` 的有界窗口内排空在途连接；完成或超时均有明确日志，超时后强制终止剩余会话并以退出码 0 结束。`tests/shutdown_integration.rs` 同时守护窗口内传输完成与超时必退语义。
 
-- HTTP 正向代理能力：已交付 absolute-form 明文转发
+- HTTP 应用入口：已交付 absolute-form 明文转发
 
   普通 HTTP 绝对形式 GET/POST 已与 CONNECT 共用认证、过期、策略、连接数限制、限速、出口选择和访问日志语义；转发前移除代理凭据与逐跳头，改写为 origin-form，并以单请求关闭控制边界。CONNECT 仍是 HTTPS 主路径；透明代理、缓存、内容改写和浏览器网关不在范围内。
 
 - 移动端 TLS 入口：已交付 TUIC v5 前端接入
 
-  TUIC v5 前端已落地为 **[TUIC v5 前端接入](./tuic.md)**（QUIC/TLS 1.3）。节点仍本地执行用户过期、策略分流、限速和连接数限制；身份归属只做查表（快照按协议命名空间 `frontends.<协议>` 建 `uuid -> username` 索引，前端凭据独立于登录密码），不从报文还原用户名、不复用登录口令。`frontends` 结构让后续协议（Trojan / VLESS 等）纯加法接入。
+  TUIC v5 前端已落地为 **[TUIC v5 前端接入](./tuic.md)**（QUIC/TLS 1.3）。节点仍本地执行用户过期、策略分流、限速和连接数限制；身份归属只做查表（快照按协议命名空间 `frontends.<协议>` 建 `uuid -> username` 索引，前端凭据独立于登录密码），不从报文还原用户名、不复用登录口令。`frontends` 结构让后续 listener adapter 按协议命名空间纯加法接入。
 
-  TCP `Connect` 复用现有出口并按用户限速；UDP `Packet` 走反向 hop 的 UDP 出口。Web fallback 伪装、TUIC over 其它传输、Hysteria2 等仍需分别证明真实业务需求，不搭车。Trojan 作为另一条 TCP/TLS 入口候选仍可按需评估。
+  TCP `Connect` 复用现有出口并按用户限速；UDP `Packet` 走反向 hop 的 UDP 出口。Web fallback 伪装、TUIC over 其它传输等仍需分别证明真实应用入口需求，不搭车。
 
 - NAT 后公网接入：已交付 reverse ingress
 
@@ -222,10 +223,11 @@ Rove 应该成为一个可以部署在边缘节点上的自包含**应用出口�
   文档、示例和基准应覆盖「按模型/供应商选出口」「交易与行情固定出口」「Webhook 回源 IP 稳定」这类路径问题。
   不在节点内解析业务 payload。
 
-- 规划其他主流代理协议
+- 新 listener adapter 必须先证明应用入口需求
 
-  在 TUIC 的 `frontends.<协议>` 加法模型上，按独立需求评估 Trojan、VLESS、Hysteria2、AnyTLS。
-  每个协议单独证明：认证命名空间、fail-closed、E2E、对 HTTP/SOCKS5 热路径零回归。不搭车、不一次做完。
+  `frontends.<协议>` 只是加法挂钩，不是「协议动物园」的开工许可。候选接入方式必须先回答：
+  它服务哪一类应用入口、认证如何 fail-closed、对现有 HTTP/SOCKS5/TUIC 热路径是否零回归。
+  消费级代理生态的协议、订阅和一键客户端配置不在范围内。
 
 ## 验收流程与标准
 
@@ -253,7 +255,7 @@ Rove 应该成为一个可以部署在边缘节点上的自包含**应用出口�
 
    HTTP CONNECT、SOCKS5、TLS 监听、认证失败、账号过期、block、direct、HTTP upstream、SOCKS5 upstream、限速、快照编译、热替换、缓存热启动、控制面 304、MQTT 查询和同步指令、MQTT 拨测追踪与诊断事件会话、reverse ingress 的认证/租约/TCP/UDP/TUIC/MTU/恢复、访问日志记录与轮转保留清理，都必须有自动化验收覆盖。缺少其中任一项时，相关方向不得标记完成。
 
-   如果进入 Trojan 方向，完成前还必须覆盖：有效 Trojan hash 归属到正确用户、未知 hash 保守拒绝、目标解析失败拒绝、block 命中拒绝、direct 转发成功、HTTP/SOCKS5 upstream 转发成功、过期用户拒绝、限速生效、连接数限制生效、TLS listener 配置错误拒绝启动，以及至少一次真实客户端兼容拨测。
+   如果新增 listener adapter，完成前还必须覆盖：有效凭据归属到正确用户、未知凭据保守拒绝、目标解析失败拒绝、block 命中拒绝、direct 转发成功、HTTP/SOCKS5 upstream 转发成功、过期用户拒绝、限速生效、连接数限制生效、TLS listener 配置错误拒绝启动，以及至少一次真实客户端兼容拨测。
 
 6. 发布前验收
 
@@ -261,9 +263,9 @@ Rove 应该成为一个可以部署在边缘节点上的自包含**应用出口�
 
 ## 完成的样子
 
-Rove 达到目标状态时，应表现为一个小而稳的边缘代理节点：启动配置清楚，快照同步和缓存语义可靠，核心协议链路有自动化验证守护，安全失败模式明确，运维可以通过健康和指标判断节点状态。
+Rove 达到目标状态时，应表现为一个小而稳的应用出口节点：启动配置清楚，快照同步和缓存语义可靠，核心协议链路有自动化验证守护，安全失败模式明确，运维可以通过健康和指标判断节点状态。
 
-- 核心代理路径被自动化回归守住。
+- 核心出口路径被自动化回归守住。
 
   HTTP CONNECT、SOCKS5、认证失败、账号过期、block、direct、HTTP upstream、SOCKS5 upstream、限速和快照热替换等路径不应只依赖手工冒烟；回归必须能在本地或 CI 中被拦下，且整体覆盖率持续不低于 80%。
 

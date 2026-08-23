@@ -80,7 +80,7 @@ timeout_ms = 500
 }
 ```
 
-> `frontends` 是按协议命名的凭据表（`frontends.<协议>`）。将来新增前端协议（如 Trojan / VLESS）只需加一个协议条目，不动顶层 schema，且可按协议独立启停 / 轮换。
+> `frontends` 是按协议命名的凭据表（`frontends.<协议>`）。将来新增 listener adapter 只需加一个协议条目，不动顶层 schema，且可按协议独立启停 / 轮换。新协议必须先证明自己服务的是应用入口，不是为了堆协议清单。
 
 ## UDP 出口：必须落在反向 hop
 
