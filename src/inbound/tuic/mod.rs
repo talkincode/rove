@@ -489,7 +489,7 @@ async fn handle_connect(
                 host: &host,
                 port,
                 decision: "block",
-                effective_policy_host: &resolved.effective_policy_host,
+                policy: resolved.attribution(),
                 snapshot_version: resolved.snapshot_version,
                 observation: None,
                 egress: None,
@@ -520,7 +520,7 @@ async fn handle_connect(
                     host: &host,
                     port,
                     decision: &initial_decision_name,
-                    effective_policy_host: &resolved.effective_policy_host,
+                    policy: resolved.attribution(),
                     snapshot_version: resolved.snapshot_version,
                     observation: None,
                     egress: None,
@@ -554,7 +554,7 @@ async fn handle_connect(
                         host: &host,
                         port,
                         decision: &initial_decision_name,
-                        effective_policy_host: &resolved.effective_policy_host,
+                        policy: resolved.attribution(),
                         snapshot_version: resolved.snapshot_version,
                         observation: None,
                         egress: None,
@@ -594,7 +594,7 @@ async fn handle_connect(
                     host: &host,
                     port,
                     decision: "block",
-                    effective_policy_host: &resolved.effective_policy_host,
+                    policy: resolved.attribution(),
                     snapshot_version: resolved.snapshot_version,
                     observation: sniff_observation,
                     egress: None,
@@ -611,7 +611,7 @@ async fn handle_connect(
         }
     }
     let decision_name = decision_label(&resolved.decision);
-    let effective_policy_host = resolved.effective_policy_host.clone();
+    let attribution = resolved.attribution();
     let snapshot_version = resolved.snapshot_version;
     let (outbound, egress) = match crate::outbound::connect(
         resolved.decision,
@@ -632,7 +632,7 @@ async fn handle_connect(
                     host: &host,
                     port,
                     decision: &decision_name,
-                    effective_policy_host: &effective_policy_host,
+                    policy: attribution.clone(),
                     snapshot_version,
                     observation: sniff_observation,
                     egress: None,
@@ -707,7 +707,7 @@ async fn handle_connect(
             host: &host,
             port,
             decision: &decision_name,
-            effective_policy_host: &effective_policy_host,
+            policy: attribution.clone(),
             snapshot_version,
             observation: sniff_observation,
             egress: egress.chain_id.is_some().then_some(egress.label.as_str()),
@@ -727,7 +727,9 @@ struct TuicTcpTrace<'a> {
     host: &'a str,
     port: u16,
     decision: &'a str,
-    effective_policy_host: &'a str,
+    /// Routing attribution for the audit record. Owned: it outlives the
+    /// borrow of the decision it came from.
+    policy: crate::model::PolicyAttribution,
     snapshot_version: u64,
     observation: Option<SniffObservation>,
     egress: Option<&'a str>,
@@ -744,8 +746,7 @@ fn record_tcp_access(ctx: &ConnCtx, started: std::time::Instant, trace: TuicTcpT
     let Some(log) = &ctx.access_log else {
         return;
     };
-    let mut traffic = TrafficIdentity::new(trace.host, trace.port)
-        .with_effective_policy_host(trace.effective_policy_host);
+    let mut traffic = TrafficIdentity::new(trace.host, trace.port).with_policy(trace.policy);
     if let Some(observation) = trace.observation {
         traffic = traffic.with_observation(observation);
     }

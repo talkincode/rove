@@ -113,6 +113,15 @@ pub struct AccessLogRecord {
     pub sniff_outcome: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub effective_policy_host: Option<String>,
+    /// Policy that owned the decision. Absent means routing was never reached
+    /// (unknown user, or a user whose policy the snapshot does not define) --
+    /// distinct from a policy that deliberately blocked.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub policy_id: Option<String>,
+    /// Zero-based index of the matching route in that policy. Absent means no
+    /// route matched and `default_action` decided.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub matched_route: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub decision: Option<String>,
     /// Physical egress when it differs from `decision` (chain decisions): the
@@ -186,7 +195,10 @@ impl AccessLogRecord {
             sniffed_host: sniff.and_then(|observation| observation.host.clone()),
             sniff_protocol: sniff.and_then(|observation| observation.protocol.map(|p| p.as_str())),
             sniff_outcome: sniff.map(|observation| observation.outcome.as_str()),
-            effective_policy_host: traffic.map(|identity| identity.effective_policy_host.clone()),
+            effective_policy_host: traffic
+                .map(|identity| identity.policy.effective_policy_host.clone()),
+            policy_id: traffic.and_then(|identity| identity.policy.policy_id.clone()),
+            matched_route: traffic.and_then(|identity| identity.policy.matched_route),
             decision: candidate.decision.clone(),
             egress: candidate.egress.clone(),
             chain_member: candidate.chain_member.clone(),

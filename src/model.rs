@@ -493,18 +493,21 @@ impl RoutingPolicy {
 
     /// First-match evaluation: the first route with ANY matching selector wins;
     /// `None` means no route matched.
-    fn first_match(&self, host: &str) -> Option<&RouteAction> {
+    /// Returns the winning route's index alongside its action so the caller can
+    /// record *which* rule decided, not just what it decided.
+    fn first_match(&self, host: &str) -> Option<(usize, &RouteAction)> {
         self.index
             .first_match(host)
-            .map(|idx| &self.routes[idx].action)
+            .map(|idx| (idx, &self.routes[idx].action))
     }
 
     #[cfg(test)]
-    fn first_match_naive(&self, host: &str) -> Option<&RouteAction> {
+    fn first_match_naive(&self, host: &str) -> Option<(usize, &RouteAction)> {
         self.routes
             .iter()
-            .find(|route| route.selectors.matches(host))
-            .map(|route| &route.action)
+            .enumerate()
+            .find(|(_, route)| route.selectors.matches(host))
+            .map(|(idx, route)| (idx, &route.action))
     }
 }
 
@@ -519,11 +522,62 @@ pub enum Decision {
     Block,
 }
 
+/// Why a connection got the outcome it did: which hostname selected it, which
+/// policy owned the decision, and which route matched. These three always
+/// travel together — an audit line that says `"block"` without naming the rule
+/// that blocked is not auditable, and reconstructing it after the fact means
+/// replaying a snapshot that may already have been replaced.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PolicyAttribution {
+    /// Hostname that actually selected the outcome. For a sniffed TLS
+    /// connection to an IP literal this is the SNI name, not the dial target.
+    pub effective_policy_host: String,
+    /// Policy that produced the decision. `None` means no policy was ever
+    /// consulted — an unknown user, or a user pointing at a policy the snapshot
+    /// does not define.
+    pub policy_id: Option<String>,
+    /// Zero-based index of the matching route in the policy's own route order.
+    /// `None` means no route matched and `default_action` decided.
+    pub matched_route: Option<usize>,
+}
+
+impl PolicyAttribution {
+    /// Attribution for a path that never reached routing (an early protocol or
+    /// auth failure): the host is known, the deciding rule is not.
+    pub fn for_host(host: impl Into<String>) -> Self {
+        PolicyAttribution {
+            effective_policy_host: host.into(),
+            policy_id: None,
+            matched_route: None,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct ResolvedDecision {
     pub decision: Decision,
     pub effective_policy_host: String,
     pub snapshot_version: u64,
+    /// Policy that produced the decision. `None` means no policy was ever
+    /// consulted — an unknown user or a user pointing at a policy the snapshot
+    /// does not define. In an audit trail that distinguishes "the policy said
+    /// no" from "there was no policy to ask", which are different incidents.
+    pub policy_id: Option<String>,
+    /// Zero-based index of the route that matched, in the policy's own route
+    /// order. `None` means no route matched and the policy's `default_action`
+    /// decided.
+    pub matched_route: Option<usize>,
+}
+
+impl ResolvedDecision {
+    /// The audit-facing view of this decision.
+    pub fn attribution(&self) -> PolicyAttribution {
+        PolicyAttribution {
+            effective_policy_host: self.effective_policy_host.clone(),
+            policy_id: self.policy_id.clone(),
+            matched_route: self.matched_route,
+        }
+    }
 }
 
 pub struct Snapshot {
@@ -803,41 +857,56 @@ impl Snapshot {
         requested_host: &str,
         sniffed_host: Option<&str>,
     ) -> ResolvedDecision {
-        let resolved = |decision, host: &str| ResolvedDecision {
+        // No policy was consulted at all: there is nothing to attribute the
+        // block to, which is itself the finding worth logging.
+        let unattributed_block = |host: &str| ResolvedDecision {
+            decision: Decision::Block,
+            effective_policy_host: host.to_string(),
+            snapshot_version: self.version,
+            policy_id: None,
+            matched_route: None,
+        };
+        let Some(user) = self.users.get(username) else {
+            return unattributed_block(requested_host);
+        };
+        let Some(policy) = self.policies.get(&user.policy) else {
+            return unattributed_block(requested_host);
+        };
+        let resolved = |decision, host: &str, matched_route| ResolvedDecision {
             decision,
             effective_policy_host: host.to_string(),
             snapshot_version: self.version,
-        };
-        let Some(user) = self.users.get(username) else {
-            return resolved(Decision::Block, requested_host);
-        };
-        let Some(policy) = self.policies.get(&user.policy) else {
-            return resolved(Decision::Block, requested_host);
+            policy_id: Some(user.policy.clone()),
+            matched_route,
         };
 
         let requested_action = policy.first_match(requested_host);
         let sniffed = sniffed_host.map(|host| (host, policy.first_match(host)));
 
         // Block veto: the requested host first, then the validated sniffed host.
-        if matches!(requested_action, Some(RouteAction::Block)) {
-            return resolved(Decision::Block, requested_host);
+        if let Some((idx, RouteAction::Block)) = requested_action {
+            return resolved(Decision::Block, requested_host, Some(idx));
         }
-        if let Some((host, Some(action))) = sniffed {
+        if let Some((host, Some((idx, action)))) = sniffed {
             if matches!(action, RouteAction::Block) {
-                return resolved(Decision::Block, host);
+                return resolved(Decision::Block, host, Some(idx));
             }
         }
 
         // For a requested IP, a non-block sniffed action wins over the
         // requested-IP action (the sniffed host is the more specific identity).
         if requested_host.parse::<std::net::IpAddr>().is_ok() {
-            if let Some((host, Some(action))) = sniffed {
-                return resolved(self.route_action_decision(action), host);
+            if let Some((host, Some((idx, action)))) = sniffed {
+                return resolved(self.route_action_decision(action), host, Some(idx));
             }
         }
 
-        if let Some(action) = requested_action {
-            return resolved(self.route_action_decision(action), requested_host);
+        if let Some((idx, action)) = requested_action {
+            return resolved(
+                self.route_action_decision(action),
+                requested_host,
+                Some(idx),
+            );
         }
         // Nothing matched: the policy's own default decides. Absent in the
         // snapshot it compiles to Direct, so a route-less policy stays a plain
@@ -846,6 +915,7 @@ impl Snapshot {
         resolved(
             self.route_action_decision(&policy.default_action),
             requested_host,
+            None,
         )
     }
 
@@ -2194,6 +2264,113 @@ mod tests {
         );
     }
 
+    /// Every decision has to name the rule behind it. Without this an operator
+    /// reading a `"block"` line cannot tell a deliberate policy from a snapshot
+    /// that silently lost the user's policy, and the snapshot that produced the
+    /// line may already have been replaced by the time anyone looks.
+    #[test]
+    fn a_decision_names_the_policy_and_route_that_produced_it() {
+        let mut users = HashMap::new();
+        users.insert(
+            "alice".to_string(),
+            RawUser {
+                password: "secret".to_string(),
+                expire: None,
+                up_rate: 0,
+                down_rate: 0,
+                max_connections: 0,
+                policy: "split-exit".to_string(),
+                frontends: Default::default(),
+            },
+        );
+        let (routing_policies, egresses) = PolicySpec {
+            egress: Some(RawUpstream {
+                kind: "socks5".to_string(),
+                addr: "special-hop.example.com:1080".to_string(),
+                username: None,
+                password: None,
+                tls: false,
+                skip_cert_verify: false,
+            }),
+            default_egress: Some(RawUpstream {
+                kind: "socks5".to_string(),
+                addr: "default-hop.example.com:1080".to_string(),
+                username: None,
+                password: None,
+                tls: false,
+                skip_cert_verify: false,
+            }),
+            routed: vec!["special.example.com".to_string()],
+            blocked: vec!["blocked.example.com".to_string()],
+            ..Default::default()
+        }
+        .into_tables("split-exit");
+        let snap = Snapshot::compile(
+            RawSnapshot {
+                version: 1,
+                users,
+                routing_policies,
+                egresses,
+                ..Default::default()
+            },
+            "node-1",
+        )
+        .unwrap();
+
+        // `blocked` lowers to route 0 and `routed` to route 1, so the indices
+        // below also pin down that attribution follows the policy's own order.
+        let blocked = snap.decide_with_sniff("alice", "blocked.example.com", None);
+        assert_eq!(blocked.policy_id.as_deref(), Some("split-exit"));
+        assert_eq!(blocked.matched_route, Some(0));
+
+        let routed = snap.decide_with_sniff("alice", "special.example.com", None);
+        assert_eq!(routed.policy_id.as_deref(), Some("split-exit"));
+        assert_eq!(routed.matched_route, Some(1));
+
+        // The default action decided: a policy is named, but no route is.
+        let defaulted = snap.decide_with_sniff("alice", "ordinary.example.com", None);
+        assert_eq!(defaulted.policy_id.as_deref(), Some("split-exit"));
+        assert_eq!(defaulted.matched_route, None);
+
+        // A sniffed veto must attribute to the route that vetoed, and to the
+        // sniffed name rather than the dial target.
+        let sniff_veto =
+            snap.decide_with_sniff("alice", "198.51.100.20", Some("blocked.example.com"));
+        assert!(matches!(sniff_veto.decision, Decision::Block));
+        assert_eq!(sniff_veto.policy_id.as_deref(), Some("split-exit"));
+        assert_eq!(sniff_veto.matched_route, Some(0));
+        assert_eq!(sniff_veto.effective_policy_host, "blocked.example.com");
+
+        // A sniffed name selecting an egress for a requested IP attributes to
+        // the sniffed route, not to the default.
+        let sniff_select =
+            snap.decide_with_sniff("alice", "198.51.100.20", Some("special.example.com"));
+        assert_eq!(sniff_select.matched_route, Some(1));
+
+        // Both blocks below are unattributed: no policy was ever consulted.
+        // That is a different incident from a policy deciding to block, and the
+        // audit record has to be able to tell them apart.
+        let unknown_user = snap.decide_with_sniff("nobody", "example.com", None);
+        assert!(matches!(unknown_user.decision, Decision::Block));
+        assert_eq!(unknown_user.policy_id, None);
+        assert_eq!(unknown_user.matched_route, None);
+
+        // The other unattributed case -- a user whose policy the snapshot does
+        // not define -- cannot be reached through `compile`, which rejects it
+        // outright. Build the snapshot directly to prove the runtime still
+        // fails closed and still reports the block as unattributed.
+        let dangling = Snapshot {
+            version: 1,
+            schema_version: SCHEMA_VERSION,
+            users: HashMap::from([("mallory".to_string(), compiled_user("no-such-policy"))]),
+            policies: HashMap::new(),
+            frontend_index: HashMap::new(),
+        };
+        let dangling_policy = dangling.decide_with_sniff("mallory", "example.com", None);
+        assert!(matches!(dangling_policy.decision, Decision::Block));
+        assert_eq!(dangling_policy.policy_id, None);
+    }
+
     #[test]
     fn compile_rejects_too_many_node_overrides() {
         let mut node_overrides = HashMap::new();
@@ -2630,12 +2807,15 @@ mod tests {
         assert!(!json.contains("password"));
     }
 
-    fn action_kind(action: Option<&RouteAction>) -> &'static str {
-        match action {
-            Some(RouteAction::Block) => "block",
-            Some(RouteAction::Direct) => "direct",
-            Some(RouteAction::Egress(_)) => "egress",
-            None => "none",
+    /// Renders a match as `"<index>:<kind>"` so a differential assertion proves
+    /// the index and the naive scan agree on *which* route won, not merely on
+    /// what kind of action it carried.
+    fn action_kind(matched: Option<(usize, &RouteAction)>) -> String {
+        match matched {
+            Some((idx, RouteAction::Block)) => format!("{idx}:block"),
+            Some((idx, RouteAction::Direct)) => format!("{idx}:direct"),
+            Some((idx, RouteAction::Egress(_))) => format!("{idx}:egress"),
+            None => "none".to_string(),
         }
     }
 
