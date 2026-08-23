@@ -47,10 +47,6 @@ jobs:
             os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             archive: tar
-          - name: darwin-amd64
-            os: macos-13
-            target: x86_64-apple-darwin
-            archive: tar
           - name: darwin-arm64
             os: macos-15
             target: aarch64-apple-darwin
@@ -260,7 +256,6 @@ jobs:
             echo "$hash"
           }
           DARWIN_ARM64_SHA="$(sha rove-darwin-arm64.tar.gz)"
-          DARWIN_AMD64_SHA="$(sha rove-darwin-amd64.tar.gz)"
           LINUX_ARM64_SHA="$(sha rove-linux-arm64.tar.gz)"
           LINUX_AMD64_SHA="$(sha rove-linux-amd64.tar.gz)"
           git clone --depth 1 \
@@ -274,13 +269,8 @@ jobs:
             license "MIT"
 
             on_macos do
-              if Hardware::CPU.arm?
-                url "${BASE_URL}/rove-darwin-arm64.tar.gz"
-                sha256 "${DARWIN_ARM64_SHA}"
-              else
-                url "${BASE_URL}/rove-darwin-amd64.tar.gz"
-                sha256 "${DARWIN_AMD64_SHA}"
-              end
+              url "${BASE_URL}/rove-darwin-arm64.tar.gz"
+              sha256 "${DARWIN_ARM64_SHA}"
             end
 
             on_linux do
