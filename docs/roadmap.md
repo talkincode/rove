@@ -190,7 +190,7 @@ Rove 应该成为一个可以部署在边缘节点上的自包含正向代理运
 
 - 移动端 TLS 入口：已交付 TUIC v5 前端接入
 
-  面向 Shadowrocket 等移动客户端的生态友好前端已落地为 **[TUIC v5 前端接入](./tuic.md)**（QUIC/TLS 1.3）。它遵守当初为此设定的边界：节点仍本地执行用户过期、策略分流、限速和连接数限制；身份归属只做查表（快照按协议命名空间 `frontends.<协议>` 建 `uuid -> username` 索引，前端凭据独立于登录密码），不从报文还原用户名、不复用登录口令。`frontends` 结构让后续协议（Trojan / VLESS 等）纯加法接入。
+  TUIC v5 前端已落地为 **[TUIC v5 前端接入](./tuic.md)**（QUIC/TLS 1.3）。节点仍本地执行用户过期、策略分流、限速和连接数限制；身份归属只做查表（快照按协议命名空间 `frontends.<协议>` 建 `uuid -> username` 索引，前端凭据独立于登录密码），不从报文还原用户名、不复用登录口令。`frontends` 结构让后续协议（Trojan / VLESS 等）纯加法接入。
 
   TCP `Connect` 复用现有出口并按用户限速；UDP `Packet` 走反向 hop 的 UDP 出口。Web fallback 伪装、TUIC over 其它传输、Hysteria2 等仍需分别证明真实业务需求，不搭车。Trojan 作为另一条 TCP/TLS 入口候选仍可按需评估。
 
@@ -245,7 +245,7 @@ Rove 应该成为一个可以部署在边缘节点上的自包含正向代理运
 
    HTTP CONNECT、SOCKS5、TLS 监听、认证失败、账号过期、block、direct、HTTP upstream、SOCKS5 upstream、限速、快照编译、热替换、缓存热启动、控制面 304、MQTT 查询和同步指令、MQTT 拨测追踪与诊断事件会话、reverse ingress 的认证/租约/TCP/UDP/TUIC/MTU/恢复、访问日志记录与轮转保留清理，都必须有自动化验收覆盖。缺少其中任一项时，相关方向不得标记完成。
 
-   如果进入 Trojan 方向，完成前还必须覆盖：有效 Trojan hash 归属到正确用户、未知 hash 保守拒绝、目标解析失败拒绝、block 命中拒绝、direct 转发成功、HTTP/SOCKS5 upstream 转发成功、过期用户拒绝、限速生效、连接数限制生效、TLS listener 配置错误拒绝启动，以及至少一次真实 Shadowrocket 或等价客户端兼容拨测。
+   如果进入 Trojan 方向，完成前还必须覆盖：有效 Trojan hash 归属到正确用户、未知 hash 保守拒绝、目标解析失败拒绝、block 命中拒绝、direct 转发成功、HTTP/SOCKS5 upstream 转发成功、过期用户拒绝、限速生效、连接数限制生效、TLS listener 配置错误拒绝启动，以及至少一次真实客户端兼容拨测。
 
 6. 发布前验收
 

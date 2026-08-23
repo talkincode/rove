@@ -73,7 +73,7 @@ jobs:
         run: |
           set -euo pipefail
           mdbook build
-          if ! rg -q 'class="mermaid"' book/*.html; then
+          if ! grep -R -q -- 'class="mermaid"' book; then
             echo "mdbook-mermaid did not rewrite diagrams" >&2
             exit 1
           fi

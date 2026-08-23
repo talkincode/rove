@@ -1,6 +1,6 @@
 # TUIC 前端接入（QUIC）
 
-`rove` 除了 TCP 上的 HTTP CONNECT / SOCKS5，还可以开一个 **TUIC v5** 前端入口。它跑在 QUIC（UDP + TLS 1.3）上，面向移动端与实时应用：单 UDP 口、TLS 混淆、客户端生态成熟（Shadowrocket、v2rayN 等），并且能把 **UDP** 一起隧道——这是浏览器代理设置做不到的。
+`rove` 除了 TCP 上的 HTTP CONNECT / SOCKS5，还可以开一个 **TUIC v5** 前端入口。它跑在 QUIC（UDP + TLS 1.3）上，面向移动端与实时应用：单 UDP 口即可同时隧道 TCP 与 UDP。客户端参数见 [客户端接入](./client-setup.md#tuic-v5)。
 
 节点的核心角色不变：**本地完成认证、策略分流、限速、连接数限制，失败即拒绝**。TUIC 只是多了一扇 QUIC 前门，出口仍复用现有能力。
 

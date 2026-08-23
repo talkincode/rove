@@ -55,7 +55,7 @@ HTTP 定期拉取一份「编译好的快照」，在内存里热替换，控制
 | 5 分钟先把它跑起来 | [快速开始](./quickstart.md) |
 | 用二进制 / Docker / 源码部署到生产 | [安装与部署](./installation.md) |
 | 弄清每个配置项什么意思 | [配置详解](./configuration.md) |
-| 让 Shadowrocket / 浏览器 / curl 连上 | [客户端接入](./client-setup.md) |
+| 客户端接入参数 | [客户端接入](./client-setup.md) |
 | 理解用户、routing policy、named egress 怎么算 | [数据模型与策略决策](./data-model.md) |
 | 构建、发布并接入大型域名/IP 地址簿 | [rove-addrbook 指南](./addrbook-format.md) |
 | 对接我自己的控制面 | [控制面同步协议](./snapshot-protocol.md) |
