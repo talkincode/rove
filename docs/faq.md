@@ -85,8 +85,8 @@
 按 action 执行；都未命中则执行 policy 的 `default_action`，没有 default 则直连。sniff 安全语义见
 [数据模型 · 决策流程](./data-model.md#决策流程-decide)。
 
-**域名规则 `discord.dev` 会匹配子域名吗？**
-会。默认是**后缀匹配**，同时匹配 `discord.dev` 和 `*.discord.dev`。要精确匹配用 `full:`，关键字用 `keyword:`。
+**域名规则 `api.openai.com` 会匹配子域名吗？**
+会。默认是**后缀匹配**，同时匹配 `api.openai.com` 和 `*.api.openai.com`。要精确匹配用 `full:`，关键字用 `keyword:`。
 写在 route 的 `selectors` 里，语义相同。
 
 **怎么让某个用户全量走某个上游？**

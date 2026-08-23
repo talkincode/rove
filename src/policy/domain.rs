@@ -18,8 +18,8 @@ struct LabelNode {
     children: HashMap<String, LabelNode>,
 }
 
-/// Suffix matcher: an inserted `discord.dev` matches `discord.dev` and any
-/// `*.discord.dev`. Walks query labels from the TLD inward.
+/// Suffix matcher: an inserted `api.openai.com` matches `api.openai.com` and any
+/// `*.api.openai.com`. Walks query labels from the TLD inward.
 #[derive(Default)]
 struct SubDomainMatcher {
     root: LabelNode,
@@ -160,12 +160,12 @@ mod tests {
     #[test]
     fn suffix_matches_subdomains() {
         let mut m = DomainMatcher::new();
-        m.add("discord.dev");
-        assert!(m.matches("discord.dev"));
-        assert!(m.matches("cdn.discord.dev"));
-        assert!(m.matches("a.b.discord.dev"));
-        assert!(!m.matches("notdiscord.dev"));
-        assert!(!m.matches("discord.dev.evil.com"));
+        m.add("api.openai.com");
+        assert!(m.matches("api.openai.com"));
+        assert!(m.matches("cdn.api.openai.com"));
+        assert!(m.matches("a.b.api.openai.com"));
+        assert!(!m.matches("notapi.openai.com"));
+        assert!(!m.matches("api.openai.com.evil.com"));
     }
 
     #[test]
@@ -181,16 +181,16 @@ mod tests {
     #[test]
     fn case_and_dot_insensitive() {
         let mut m = DomainMatcher::new();
-        m.add("Discord.Dev.");
-        assert!(m.matches("CDN.discord.dev"));
+        m.add("Api.OpenAI.Com.");
+        assert!(m.matches("CDN.api.openai.com"));
     }
 
     #[test]
     fn wildcard_notation_is_a_suffix_alias() {
         let mut m = DomainMatcher::new();
-        m.add("*.discord.dev");
-        assert!(m.matches("discord.dev"));
-        assert!(m.matches("cdn.discord.dev"));
-        assert!(!m.matches("notdiscord.dev"));
+        m.add("*.api.openai.com");
+        assert!(m.matches("api.openai.com"));
+        assert!(m.matches("cdn.api.openai.com"));
+        assert!(!m.matches("notapi.openai.com"));
     }
 }

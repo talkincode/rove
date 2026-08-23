@@ -106,7 +106,7 @@ route `selectors[]` 的每一项都按前缀区分匹配方式：
 
 | 写法 | 匹配方式 | 示例 |
 |---|---|---|
-| `discord.dev` | **后缀匹配**（默认）：匹配自身及所有子域 | 命中 `discord.dev`、`app.discord.dev` |
+| `api.openai.com` | **后缀匹配**（默认）：匹配自身及所有子域 | 命中 `api.openai.com`、`app.api.openai.com` |
 | `full:ads.example.com` | **精确匹配**：只匹配完全相同的域名 | 只命中 `ads.example.com`，不含子域 |
 | `keyword:analytics` | **关键字**：域名包含该子串即命中 | 命中 `x-analytics.io`、`analytics.cdn.net` |
 | `10.0.0.0/8` | **IP CIDR**：网段匹配 | 命中该网段内所有 IP |

@@ -126,7 +126,8 @@ jobs:
           abctl=./target/release/rove-abctl
           # 长期稳定的正向探针；易漂移的第三方 IP 不放这里，交给 diff 门。
           "${abctl}" query dist-book.rab www.google.com geosite/google
-          "${abctl}" query dist-book.rab www.baidu.com geosite/cn
+          "${abctl}" query dist-book.rab api.openai.com geosite/openai
+          "${abctl}" query dist-book.rab api.binance.com exchange/binance
           "${abctl}" query dist-book.rab doubleclick.net geosite/category-ads-all
           "${abctl}" query dist-book.rab 8.8.8.8 google-infra
           "${abctl}" query dist-book.rab 104.16.1.1 cloudflare
@@ -136,7 +137,9 @@ jobs:
             echo "negative probe unexpectedly matched" >&2
             exit 1
           fi
-          # 最小规模断言：防止上游悄悄清空导致的灾难性缩水
+          # 最小规模断言：防止上游悄悄清空导致的灾难性缩水。
+          # 门限按当前构建量的一半左右取整——够低，不会被上游的正常增删打到；
+          # 够高，能在某个上游被清空时立刻拦住发布。
           inspect="$("${abctl}" inspect dist-book.rab)"
           echo "${inspect}"
           categories="$(sed -n 's/^categories \([0-9]*\)$/\1/p' <<<"${inspect}")"
@@ -144,7 +147,7 @@ jobs:
           suffix="$(sed -n 's/.*suffix=\([0-9]*\).*/\1/p' <<<"${inspect}")"
           test "${categories}" -ge 100
           test "${ip4}" -ge 10000
-          test "${suffix}" -ge 5000
+          test "${suffix}" -ge 2000
 
       - name: Export control-plane sidecar JSON
         run: |

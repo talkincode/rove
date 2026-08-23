@@ -13,6 +13,14 @@
 
 ### Changed
 
+- **破坏性**：`addrbook/book.toml` 的收录范围收敛为基础设施与企业应用数据。移除
+  `geosite/cn`（geolocation-cn）、`geosite/category-ai-!cn`、`geosite/category-netdisk-!cn`
+  以及流媒体、社交、`telegram-ip` 等分类——这些数据集以「哪些站点需要特殊访问」为组织方式，
+  服务的是消费级绕行场景，不是应用出口治理。新增 `exchange/binance`、`exchange/okx`、
+  `exchange/bybit`、`exchange/kraken`：交易系统对出口 IP 稳定性最敏感，是固定出口的主用例。
+  这是发布清单的取舍，不是格式限制——`.rab` 格式和 `book:` selector 对分类内容没有任何约束，
+  需要其它数据的部署方可自行维护私有 manifest。引用了被移除分类的快照会 fail-closed 拒收
+  （`unknown addrbook category`），不会静默放行。
 - **破坏性**：routing policy 的 `default_egress`（egress ID 字符串）由 `default_action`
   （与 route 同形的 action 对象）取代。迁移：`"default_egress": "x"` 写成
   `"default_action": {"type": "egress", "egress": "x"}`。带 `default_egress` 的快照会撞上

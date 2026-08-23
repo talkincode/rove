@@ -8,6 +8,16 @@
 #
 # epoch 是单调递增的 u64 发布序号（这里用 YYYYMMDDNN），由发布方维护，
 # 绝不隐式取构建机墙钟。
+#
+# 收录范围：这份清单只收基础设施与企业应用的地址数据——公有云官方 IP 段、CDN、
+# AI / 开发者 API、交易所与金融 API、企业协作 SaaS、广告与追踪域名（用于 block）、
+# 内网保留域名。判据是「一个组织会不会为成本、时延、稳定性、固定出口或合规去路由它」。
+#
+# 不收：以「哪些站点需要特殊访问」为组织方式的数据集。这类分类（例如按国境切分的
+# geolocation 列表、带 `!cn` 后缀的取反合集、流媒体解锁与社交站点清单）服务的是
+# 消费级绕行场景，不是应用出口治理，收进来只会让路由表的意图变得含糊。需要这类数据
+# 的部署方可以自行在私有 manifest 里追加 [[source]]——地址簿格式本身不设限制，
+# 但官方发布的 book.rab 不含它们。
 epoch = 2026073101
 
 # ══════════════ 本地维护的自定义数据 ══════════════
@@ -68,28 +78,16 @@ kind = "cidrs"
 path = "data/upstream/cloudflare-v6.cidrs"
 url = "https://www.cloudflare.com/ips-v6"
 
-# Telegram 官方数据中心段
-[[source]]
-category = "telegram-ip"
-kind = "cidrs"
-path = "data/upstream/telegram.cidrs"
-url = "https://core.telegram.org/resources/cidr.txt"
-
 # ══════════════ v2fly domain-list-community 域名表 ══════════════
 # data/upstream/v2fly-community/ 是完整 data 目录（scripts/addrbook-refresh.sh
 # 从 GitHub tarball 展开），include: / &affiliation 在目录内解析，
 # 因此可以直接引用带依赖的大表。
 
-# --- 大厂 / 平台 ---
+# --- 供应商基础设施 / CDN ---
 [[source]]
 category = "geosite/google"
 kind = "v2fly-domains"
 path = "data/upstream/v2fly-community/google"
-
-[[source]]
-category = "geosite/youtube"
-kind = "v2fly-domains"
-path = "data/upstream/v2fly-community/youtube"
 
 [[source]]
 category = "geosite/apple"
@@ -102,11 +100,6 @@ kind = "v2fly-domains"
 path = "data/upstream/v2fly-community/microsoft"
 
 [[source]]
-category = "geosite/meta"
-kind = "v2fly-domains"
-path = "data/upstream/v2fly-community/meta"
-
-[[source]]
 category = "geosite/amazon"
 kind = "v2fly-domains"
 path = "data/upstream/v2fly-community/amazon"
@@ -116,75 +109,7 @@ category = "geosite/akamai"
 kind = "v2fly-domains"
 path = "data/upstream/v2fly-community/akamai"
 
-# --- 社交 ---
-[[source]]
-category = "geosite/twitter"
-kind = "v2fly-domains"
-path = "data/upstream/v2fly-community/twitter"
-
-# x 包含 twitter + xai（include）
-[[source]]
-category = "geosite/x"
-kind = "v2fly-domains"
-path = "data/upstream/v2fly-community/x"
-
-[[source]]
-category = "geosite/tiktok"
-kind = "v2fly-domains"
-path = "data/upstream/v2fly-community/tiktok"
-
-[[source]]
-category = "geosite/reddit"
-kind = "v2fly-domains"
-path = "data/upstream/v2fly-community/reddit"
-
-[[source]]
-category = "geosite/linkedin"
-kind = "v2fly-domains"
-path = "data/upstream/v2fly-community/linkedin"
-
-[[source]]
-category = "geosite/discord"
-kind = "v2fly-domains"
-path = "data/upstream/v2fly-community/discord"
-
-[[source]]
-category = "geosite/telegram"
-kind = "v2fly-domains"
-path = "data/upstream/v2fly-community/telegram"
-
-# --- 流媒体 / 游戏 ---
-[[source]]
-category = "geosite/netflix"
-kind = "v2fly-domains"
-path = "data/upstream/v2fly-community/netflix"
-
-[[source]]
-category = "geosite/spotify"
-kind = "v2fly-domains"
-path = "data/upstream/v2fly-community/spotify"
-
-[[source]]
-category = "geosite/hulu"
-kind = "v2fly-domains"
-path = "data/upstream/v2fly-community/hulu"
-
-[[source]]
-category = "geosite/disney"
-kind = "v2fly-domains"
-path = "data/upstream/v2fly-community/disney"
-
-[[source]]
-category = "geosite/twitch"
-kind = "v2fly-domains"
-path = "data/upstream/v2fly-community/twitch"
-
-[[source]]
-category = "geosite/steam"
-kind = "v2fly-domains"
-path = "data/upstream/v2fly-community/steam"
-
-# --- 协作 ---
+# --- 企业协作 SaaS ---
 [[source]]
 category = "geosite/slack"
 kind = "v2fly-domains"
@@ -195,7 +120,12 @@ category = "geosite/zoom"
 kind = "v2fly-domains"
 path = "data/upstream/v2fly-community/zoom"
 
-# --- 开发 / AI ---
+[[source]]
+category = "geosite/linkedin"
+kind = "v2fly-domains"
+path = "data/upstream/v2fly-community/linkedin"
+
+# --- 开发 / AI API ---
 [[source]]
 category = "geosite/github"
 kind = "v2fly-domains"
@@ -221,13 +151,30 @@ category = "geosite/google-gemini"
 kind = "v2fly-domains"
 path = "data/upstream/v2fly-community/google-gemini"
 
-# 境外 AI 合集（含 anthropic / cursor / copilot 等）
-[[source]]
-category = "geosite/category-ai-!cn"
-kind = "v2fly-domains"
-path = "data/upstream/v2fly-community/category-ai-!cn"
+# --- 交易所 / 金融 API ---
+# 交易与做市系统对出口 IP 稳定性和路径抖动最敏感，通常需要固定出口。
 
-# --- 网盘 / 存储 ---
+[[source]]
+category = "exchange/binance"
+kind = "v2fly-domains"
+path = "data/upstream/v2fly-community/binance"
+
+[[source]]
+category = "exchange/okx"
+kind = "v2fly-domains"
+path = "data/upstream/v2fly-community/okx"
+
+[[source]]
+category = "exchange/bybit"
+kind = "v2fly-domains"
+path = "data/upstream/v2fly-community/bybit"
+
+[[source]]
+category = "exchange/kraken"
+kind = "v2fly-domains"
+path = "data/upstream/v2fly-community/kraken"
+
+# --- 企业存储 ---
 [[source]]
 category = "geosite/onedrive"
 kind = "v2fly-domains"
@@ -238,19 +185,8 @@ category = "geosite/dropbox"
 kind = "v2fly-domains"
 path = "data/upstream/v2fly-community/dropbox"
 
-[[source]]
-category = "geosite/category-netdisk-!cn"
-kind = "v2fly-domains"
-path = "data/upstream/v2fly-community/category-netdisk-!cn"
-
-# --- 地域 / 集合 / 特殊 ---
-# 大陆常见站点全集（geolocation-cn，含大量 include）
-[[source]]
-category = "geosite/cn"
-kind = "v2fly-domains"
-path = "data/upstream/v2fly-community/geolocation-cn"
-
-# 广告域名全集
+# --- 安全与内网 ---
+# 广告 / 追踪域名全集，用于 block route。
 [[source]]
 category = "geosite/category-ads-all"
 kind = "v2fly-domains"
