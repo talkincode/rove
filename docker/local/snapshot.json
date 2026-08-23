@@ -146,8 +146,8 @@
       "backend": {
         "kind": "https",
         "addr": "hop-https.local:8443",
-        "username": "rove",
-        "password": "rove",
+        "username": "bench-hop",
+        "password": "bench-hop-secret",
         "tls": true
       }
     },
@@ -156,8 +156,8 @@
       "backend": {
         "kind": "socks5",
         "addr": "hop-socks5:1080",
-        "username": "rove",
-        "password": "rove",
+        "username": "bench-hop",
+        "password": "bench-hop-secret",
         "tls": false
       }
     },
@@ -166,8 +166,8 @@
       "backend": {
         "kind": "socks5",
         "addr": "hop-socks5tls.local:1081",
-        "username": "rove",
-        "password": "rove",
+        "username": "bench-hop",
+        "password": "bench-hop-secret",
         "tls": true
       }
     },
@@ -195,8 +195,8 @@
           "backend": {
             "kind": "socks5",
             "addr": "hop-socks5:1080",
-            "username": "rove",
-            "password": "rove",
+            "username": "bench-hop",
+            "password": "bench-hop-secret",
             "tls": false
           }
         }
@@ -219,8 +219,8 @@
           "backend": {
             "kind": "socks5",
             "addr": "hop-socks5:1080",
-            "username": "rove",
-            "password": "rove",
+            "username": "bench-hop",
+            "password": "bench-hop-secret",
             "tls": false
           }
         }
