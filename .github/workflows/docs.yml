@@ -70,14 +70,20 @@ jobs:
           ls -lh docs/downloads/
 
       - name: Build book
-        run: mdbook build
+        run: |
+          set -euo pipefail
+          mdbook build
+          if ! rg -q 'class="mermaid"' book/*.html; then
+            echo "mdbook-mermaid did not rewrite diagrams" >&2
+            exit 1
+          fi
 
       - name: Ensure downloads published with book
         run: |
           set -euo pipefail
           mkdir -p book/downloads
           cp -f docs/downloads/rove-hop-routeros-bundle.zip book/downloads/
-          # mdBook may not copy unrecognized paths; force-publish downloads
+          printf '%s\n' 'rove.talkincode.net' > book/CNAME
           ls -lh book/downloads/
 
       - name: Upload Pages artifact

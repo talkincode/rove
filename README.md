@@ -15,7 +15,7 @@ Rove 优化的是**应用访问网络的那一跳**。
 - **Webhook 与回调出口**：支付、券商、IM 机器人的回源 IP 必须稳定、可审计。
 - **远程与隔离网段**：把办公或 CI 里的应用流量送进只在内网可达的服务，不必给整台机器开 VPN。
 
-完整文档见 **[talkincode.github.io/rove](https://talkincode.github.io/rove/)**（中文）。
+完整文档见 **[rove.talkincode.net](https://rove.talkincode.net/)**（中文）。
 
 ## ✨ 它能做什么
 
@@ -105,7 +105,7 @@ flowchart TB
 ```
 
 edge 之间不共享任何状态，扩容就是多摆一台；hop 多写一个 `--reverse-quic` 参数就多注册一个入口。
-细节见 [反向 hop 数据面](https://talkincode.github.io/rove/reverse-hop.html)。
+细节见 [反向 hop 数据面](https://rove.talkincode.net/reverse-hop.html)。
 
 ### 场景三：Subnetra —— 不装 VPN，打进隔离网段
 
@@ -124,7 +124,7 @@ flowchart LR
 
 反过来也行：让 rove 作 hub，NAT 后的 spoke 拨上来，spoke 一侧就能顺着 overlay 用 hub 的 HTTP/SOCKS 代理。与
 [Zig 版 subnetra](https://github.com/jamiesun/subnetra) 完全线兼容（CI 里有逐字节 KAT 校验），
-老节点不改任何东西直接连。详见 [内嵌 Subnetra 组网底座](https://talkincode.github.io/rove/subnetra.html)。
+老节点不改任何东西直接连。详见 [内嵌 Subnetra 组网底座](https://rove.talkincode.net/subnetra.html)。
 
 ## 📊 性能大概什么水平
 
@@ -151,7 +151,7 @@ v0.2.0 单机回环基准（本地 Docker 栈 + 进程内 subnetra；纯 Rust �
 想自己复现：`docker compose -f docker-compose.local.yml up -d` 起本地栈，然后跑
 `cargo run --release --example proxy-benchmark-local -- all`（延迟 + 吞吐 + 并发扫描 + 限速精度）与
 `cargo run --release --example subnetra-benchmark-local`。完整矩阵、分相延迟与方法学见
-[基准测试报告](https://talkincode.github.io/rove/benchmark.html)。
+[基准测试报告](https://rove.talkincode.net/benchmark.html)。
 要测 reverse ingress 接入开销，加
 `--paths local,reverse-ingress --modes direct` 即可对比同一 listener 的两条路径。
 TUIC/UDP 使用
@@ -228,20 +228,20 @@ docker run -d --name rove -p 8080:8080 \
 ```
 
 更完整的步骤（TLS 证书、SOCKS5、systemd、独立 hop 出口）见
-[快速开始](https://talkincode.github.io/rove/quickstart.html) 与
-[安装与部署](https://talkincode.github.io/rove/installation.html)。
+[快速开始](https://rove.talkincode.net/quickstart.html) 与
+[安装与部署](https://rove.talkincode.net/installation.html)。
 
 ## 🔗 相关链接
 
-- **[文档站点](https://talkincode.github.io/rove/)** — 配置详解、数据模型、快照协议、FAQ、故障排查
+- **[文档站点](https://rove.talkincode.net/)** — 配置详解、数据模型、快照协议、FAQ、故障排查
   （源码在 [`docs/`](./docs/)，mdBook 构建）
-- [最佳实践场景](https://talkincode.github.io/rove/best-practices.html) ·
-  [rove-addrbook](https://talkincode.github.io/rove/addrbook-format.html) ·
-  [反向 hop](https://talkincode.github.io/rove/reverse-hop.html) ·
-  [反向公网入口](https://talkincode.github.io/rove/reverse-ingress.html) ·
-  [TUIC 前端](https://talkincode.github.io/rove/tuic.html) ·
-  [Subnetra 组网](https://talkincode.github.io/rove/subnetra.html) ·
-  [独立 hop 节点](https://talkincode.github.io/rove/hop.html)
+- [最佳实践场景](https://rove.talkincode.net/best-practices.html) ·
+  [rove-addrbook](https://rove.talkincode.net/addrbook-format.html) ·
+  [反向 hop](https://rove.talkincode.net/reverse-hop.html) ·
+  [反向公网入口](https://rove.talkincode.net/reverse-ingress.html) ·
+  [TUIC 前端](https://rove.talkincode.net/tuic.html) ·
+  [Subnetra 组网](https://rove.talkincode.net/subnetra.html) ·
+  [独立 hop 节点](https://rove.talkincode.net/hop.html)
 - [Subnetra 协议参考实现（Zig）](https://github.com/jamiesun/subnetra) — Rove 与其完全线兼容
 - [smoltcp](https://github.com/smoltcp-rs/smoltcp) · [quinn](https://github.com/quinn-rs/quinn) —
   内嵌用户态 IP 栈与 QUIC 实现

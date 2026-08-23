@@ -12,7 +12,7 @@ create-missing = false
 [output.html]
 default-theme = "light"
 preferred-dark-theme = "navy"
-site-url = "/rove/"
+site-url = "/"
 git-repository-url = "https://github.com/talkincode/rove"
 edit-url-template = "https://github.com/talkincode/rove/edit/main/{path}"
 no-section-label = false

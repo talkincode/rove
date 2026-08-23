@@ -60,7 +60,7 @@
 3. hop **支持自动重连**（1s–30s 退避）。可以先起 hop 再启 edge。  
 4. 未注册成功时，命中该出口的请求 **fail-closed**（不会偷跑直连）。
 
-更完整的协议说明见仓库文档：[反向 hop 数据面](https://talkincode.github.io/rove/reverse-hop.html)。
+更完整的协议说明见仓库文档：[反向 hop 数据面](https://rove.talkincode.net/reverse-hop.html)。
 
 ---
 
@@ -175,7 +175,7 @@ sha256sum -c SHA256SUMS
 ### 4.2 文档站下载
 
 GitHub Pages 提供同名 zip（随文档构建更新），入口见文档页
-[RouterOS 容器部署 rove-hop](https://talkincode.github.io/rove/hop-routeros.html)。
+[RouterOS 容器部署 rove-hop](https://rove.talkincode.net/hop-routeros.html)。
 
 ### 4.3 自行打包（开发机）
 
