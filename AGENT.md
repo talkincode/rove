@@ -84,12 +84,15 @@ Rove 是公开的应用网络优化器：一个轻量单体正向代理，内置
 
 ## 数据模型规则
 
-- 控制面新的输出格式应使用 `docs/snapshot-protocol.md` 中定义的 `RawSnapshot`。
-- 节点仍兼容旧版 `userdata.json` 结构：`timestamp`、`user_list`、`address_list`、`routings`。
-- 旧格式转换只用于迁移兼容。转换时，每条旧 routing 会映射为一个内部 `legacy-route-*` group，
-  用户按旧 routing 顺序用用户名或 code 做 first-match 归组。
-- 当前规范化模型是“每个用户一个 group”。如果旧数据依赖同一用户按不同规则走不同 upstream，
-  新模型无法无损表达。
+- 控制面输出必须使用 `docs/snapshot-protocol.md` 中定义的 `RawSnapshot`。
+- **只有一种 schema**（`schema_version: 1`）：`users` + `routing_policies` + `egresses` 三张独立表。
+  没有兼容层，也不接受任何其他形态的文档。
+- 全部 wire 结构都是 `deny_unknown_fields`：含未知字段或异形的文档整份拒收，绝不半懂半猜地编译。
+  新增语义字段必须配合 schema/capability 门控发布，因为不支持该字段的旧节点会明确拒收。
+- 用户通过 `policy` 绑定一条 routing policy；route 按数组顺序 first-match-wins；
+  未命中用 `default_egress`，没有则直连。
+- `node_overrides` 只能整项替换 base `egresses` 里已存在的同名 egress，不能新增 node-only
+  egress，也不能改 policy —— route 表在全网必须是同一份。
 - `version` 必须单调递增。`304` 或 `version <= since` 表示不替换当前快照。
 
 ## 构建与测试

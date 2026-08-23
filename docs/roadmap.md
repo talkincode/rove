@@ -37,13 +37,13 @@ local cache: data/snapshot.json
 
 ## 项目画像（目标状态）
 
-Rove 应该成为一个可以部署在边缘节点上的自包含正向代理运行时：配置面简单、热路径短、失败模式可预期，运维人员不需要理解 GOST 的 service、chain、hop、listener、connector 组合图，也不需要在节点侧维护反范式的 `userdata.json`。
+Rove 应该成为一个可以部署在边缘节点上的自包含**应用出口平面（application egress plane）**：为应用侧的出站流量提供身份、策略、路由、出口选择、限速与审计。配置面简单、热路径短、失败模式可预期，运维人员不需要理解一张 service / chain / hop / listener / connector 的组合图，也不需要在节点侧维护反范式的用户数据。
 
-项目优先级是：代理链路正确性和策略一致性高于功能数量；离线可启动和快照热替换高于控制面实时性；节点二进制的可审计性和低依赖高于插件式扩展的灵活性。新增能力必须服务于边缘代理节点这个核心角色，不能把节点扩张成控制面、管理后台或通用代理编排平台。
+项目优先级是：链路正确性和策略一致性高于功能数量；离线可启动和快照热替换高于控制面实时性；节点二进制的可审计性和低依赖高于插件式扩展的灵活性。新增能力必须服务于「应用出口平面」这个核心角色，不能把节点扩张成控制面、管理后台或通用流量编排平台。
 
-工程质量上，Rove 不能接受“先堆功能、后补测试”的开发方式。任何影响代理链路、认证、策略、限速、快照同步、MQTT 运维通道、配置解析或安全失败模式的变化，都必须先定义可失败的自动化验收，再通过最小实现让测试通过。覆盖率是项目准入门槛，不是发布后的补救项。
+工程质量上，Rove 不能接受“先堆功能、后补测试”的开发方式。任何影响出口链路、认证、策略、限速、快照同步、MQTT 运维通道、配置解析或安全失败模式的变化，都必须先定义可失败的自动化验收，再通过最小实现让测试通过。覆盖率是项目准入门槛，不是发布后的补救项。
 
-用户体验上，节点应该保持少量明确配置：节点身份、控制面地址与令牌、监听列表、日志等级。运行时行为应该可观察、可回退、可解释；当控制面失败、快照无效、上游不可达或认证失败时，节点应给出明确结果，而不是静默降级成绕过策略的开放代理。
+用户体验上，节点应该保持少量明确配置：节点身份、控制面地址与令牌、监听列表、日志等级。运行时行为应该可观察、可回退、可解释；当控制面失败、快照无效、出口不可达或认证失败时，节点应给出明确结果，而不是静默降级成绕过策略的开放代理。
 
 ## 当前能力清单
 
@@ -66,7 +66,7 @@ Rove 应该成为一个可以部署在边缘节点上的自包含正向代理运
 
 - 用户认证、过期校验、策略决策和热替换
 
-  `src/engine.rs` 使用 `ArcSwap<Snapshot>` 提供热替换快照，认证路径按用户名查找用户并检查密码与过期日期。`src/model.rs` 将控制面下发的 schema v4 `routing_policies`/`egresses`（以及兼容的 v1–v3 `groups`/`chains`）按节点 `node_id` 编译为运行期 `Snapshot`（`Snapshot::compile(doc, node_id)`）。v4 按有序 route first-match-wins 选择 named egress / direct / block，未命中可用 `default_egress`；v1–v3 仍是 block → proxy+upstream → default_upstream → direct。`node_overrides` 让控制面向所有节点发同一份快照，同时仍能给个别节点覆盖 egress（v4）或 group/chain（v1–v3），详见 `docs/snapshot-protocol.md`。
+  `src/engine.rs` 使用 `ArcSwap<Snapshot>` 提供热替换快照，认证路径按用户名查找用户并检查密码与过期日期。`src/model.rs` 将控制面下发的唯一一种快照 schema（`schema_version: 1`：`users` + `routing_policies` + `egresses` 三张独立表）按节点 `node_id` 编译为运行期 `Snapshot`（`Snapshot::compile(doc, node_id)`）。决策按有序 route first-match-wins 选择 named egress / direct / block，未命中可用 `default_egress`，否则直连。全部 wire 结构 `deny_unknown_fields`，异形或含未知字段的文档整份拒收而非半懂半猜地执行。`node_overrides` 让控制面向所有节点发同一份快照，同时仍能给个别节点整项替换已存在的 egress realization（不能新增 node-only egress，也不能改 policy），详见 `docs/snapshot-protocol.md`。
 
 - 域名与 IP 规则匹配
 
@@ -74,7 +74,7 @@ Rove 应该成为一个可以部署在边缘节点上的自包含正向代理运
 
 - rove-addrbook 版本化地址数据集（`.rab` + `book:` 规则 scheme）
 
-  `src/addrbook/` 实现稳定的 `.rab` 二进制格式（小端、偏移寻址、SHA-256 尾部校验、确定性构建、加载期全量不变量校验，规范见 `docs/addrbook-format.md`）与层级分类查询（IP 区间二分、域名 exact/后缀/关键字、`google` 自动展开 `google/ads` 等子孙）。控制面快照规则用 `book:<category>` 引用分类并要求 `schema_version >= 3`（推荐 v4 写在 route `selectors`），让旧节点明确拒绝新语义；显式规则与 addrbook 分类按“或”组合，v4 顺序由 routes 数组决定。快照编译期钉住书版本，书热替换 = 重编译最近快照，成功才双双替换。fail-closed：无书或未知分类拒绝整个快照，坏工件启动即拒绝、运行期保留旧书。`rove-abctl` 提供 fetch/build/verify/diff/query/bench 采集构建工具链，支持 cidrs、Rove 域名规则、v2fly domain-list、AWS/Azure/GCP 官方地址段六种数据源，`diff --max-shrink` 作为发布异常门。控制面快照里的显式地址仅作补充，addrbook 是主要地址源。数据发布走独立于二进制版本的定期通道：`.github/workflows/addrbook-release.yml` 用仓库清单 `addrbook/book.toml` 定时构建，经 verify/diff 门/探针后发布到滚动 Release 标签 `addrbook-latest`；数据门禁失败只阻断数据更新，不影响代码发布。
+  `src/addrbook/` 实现稳定的 `.rab` 二进制格式（小端、偏移寻址、SHA-256 尾部校验、确定性构建、加载期全量不变量校验，规范见 `docs/addrbook-format.md`）与层级分类查询（IP 区间二分、域名 exact/后缀/关键字、`google` 自动展开 `google/ads` 等子孙）。控制面快照在 route `selectors` 里用 `book:<category>` 引用分类；同一条 route 内显式规则与 addrbook 分类按“或”组合，跨 route 的优先级由 routes 数组顺序决定。快照编译期钉住书版本，书热替换 = 重编译最近快照，成功才双双替换。fail-closed：无书或未知分类拒绝整个快照，坏工件启动即拒绝、运行期保留旧书。`rove-abctl` 提供 fetch/build/verify/diff/query/bench 采集构建工具链，支持 cidrs、Rove 域名规则、v2fly domain-list、AWS/Azure/GCP 官方地址段六种数据源，`diff --max-shrink` 作为发布异常门。控制面快照里的显式地址仅作补充，addrbook 是主要地址源。数据发布走独立于二进制版本的定期通道：`.github/workflows/addrbook-release.yml` 用仓库清单 `addrbook/book.toml` 定时构建，经 verify/diff 门/探针后发布到滚动 Release 标签 `addrbook-latest`；数据门禁失败只阻断数据更新，不影响代码发布。
 
 - direct、HTTP upstream、SOCKS5 upstream 出站连接
 
@@ -86,7 +86,7 @@ Rove 应该成为一个可以部署在边缘节点上的自包含正向代理运
 
 - 控制面轮询、快照缓存与热启动
 
-  `src/sync/mod.rs` 从配置的 `snapshot_url`——完整地址，不拼接任何固定路径，只追加 `?since=`/`&since=`——拉取快照。接口不带 `node_id`，所有节点命中同一个 URL 并收到完全相同的响应体。使用 Bearer token，支持 304 不变更语义，先读本地缓存再立即尝试一次控制面同步；远端新版本先编译验证，只有可服务的快照才会原子写回缓存并热替换引擎快照，连续同步失败会退避重试。需要按节点区分的 group（如不同边缘位置的本地 hop）由节点拿到同一份响应体后，用本地配置的 `node_id` 去响应体自带的 `node_overrides` 里自选、在本地合并，控制面不需要知道请求者是哪个节点。
+  `src/sync/mod.rs` 从配置的 `snapshot_url`——完整地址，不拼接任何固定路径，只追加 `?since=`/`&since=`——拉取快照。接口不带 `node_id`，所有节点命中同一个 URL 并收到完全相同的响应体。使用 Bearer token，支持 304 不变更语义，先读本地缓存再立即尝试一次控制面同步；远端新版本先编译验证，只有可服务的快照才会原子写回缓存并热替换引擎快照，连续同步失败会退避重试。需要按节点区分的出口（如不同边缘位置的本地 hop）由节点拿到同一份响应体后，用本地配置的 `node_id` 去响应体自带的 `node_overrides` 里自选、在本地合并，控制面不需要知道请求者是哪个节点。
 
 - MQTT 异步运维通道
 
@@ -127,6 +127,14 @@ Rove 应该成为一个可以部署在边缘节点上的自包含正向代理运
   当前可靠热路径是 HTTP CONNECT、SOCKS5 与 TUIC。后续将按真实应用场景规划其他主流代理协议
   （Trojan、VLESS、Hysteria2、AnyTLS 等）：每加一个协议都要有独立的认证命名空间、fail-closed
   失败路径和 E2E。新协议不得降低现有热路径的正确性与可观测性。
+
+- 不把出口平面做成通用反向代理或 API 网关。
+
+  Rove 可以在入站侧增加以服务端声明的 origin 为准的网关型 listener（例如按 SNI 路由的 TLS
+  透传入口），把它们当作又一种 listener adapter 复用同一条 `identity -> policy -> route ->
+  egress` 主干。但 origin 必须由节点本地配置或快照声明，**绝不能由客户端的 Host、URL 或路径
+  表达**——那等于把出口平面退化成开放正向代理和 SSRF 入口。请求改写、鉴权卸载、限流计费、
+  证书签发、L7 负载均衡策略、虚拟主机管理这类 API 网关职责不属于 Rove。
 
 - 不把 AI Provider 或交易柜台的 L7 业务语义嵌入节点热路径。
 

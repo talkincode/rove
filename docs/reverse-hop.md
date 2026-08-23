@@ -131,11 +131,11 @@ open_timeout_secs = 10       # 开隧道超时（超时按 reverse_open fail-clo
 
 ### 快照里怎么写反向出口
 
-控制面快照（schema v4）把 named egress 的 backend 写成 `kind = "reverse"`、`addr = "<hop_id>"`：
+控制面快照把 named egress 的 backend 写成 `kind = "reverse"`、`addr = "<hop_id>"`：
 
 ```json
 {
-  "schema_version": 4,
+  "schema_version": 1,
   "version": 1,
   "users": { "alice": { "password": "example", "policy": "reverse-egress" } },
   "routing_policies": {

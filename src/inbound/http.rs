@@ -1184,7 +1184,8 @@ async fn report_trace(ctx: &Arc<Ctx>, started: Instant, peer: SocketAddr, fields
 mod tests {
     use super::*;
     use crate::engine::Engine;
-    use crate::model::{RawGroup, RawSnapshot, RawUser, Snapshot};
+    use crate::model::test_support::PolicySpec;
+    use crate::model::{RawSnapshot, RawUser, Snapshot};
     use crate::util::read_http_head;
     use std::collections::HashMap;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -1464,27 +1465,25 @@ mod tests {
                 up_rate: 0,
                 down_rate: 0,
                 max_connections: 0,
-                group: "open".to_string(),
+                policy: "open".to_string(),
                 frontends: Default::default(),
             },
         );
-        let mut groups = HashMap::new();
-        groups.insert(
-            "open".to_string(),
-            RawGroup {
-                upstream: None,
-                default_upstream: None,
-                proxy: Vec::new(),
-                block: Vec::new(),
-            },
-        );
+        let (routing_policies, egresses) = PolicySpec {
+            egress: None,
+            default_egress: None,
+            routed: Vec::new(),
+            blocked: Vec::new(),
+        }
+        .into_tables("open");
         let engine = Engine::new();
         engine.replace(
             Snapshot::compile(
                 RawSnapshot {
                     version: 1,
                     users,
-                    groups,
+                    routing_policies,
+                    egresses,
                     ..Default::default()
                 },
                 "node-1",
@@ -1563,7 +1562,7 @@ mod tests {
     }
 
     fn engine_with_chain(members: Vec<(&str, u32, &str, String)>) -> Arc<Engine> {
-        use crate::model::{RawChain, RawChainMember, RawUpstream};
+        use crate::model::{RawChainMember, RawEgress, RawRoutingPolicy, RawUpstream};
         let mut users = HashMap::new();
         users.insert(
             "alice".to_string(),
@@ -1573,31 +1572,20 @@ mod tests {
                 up_rate: 0,
                 down_rate: 0,
                 max_connections: 0,
-                group: "chained".to_string(),
+                policy: "chained".to_string(),
                 frontends: Default::default(),
             },
         );
-        let mut groups = HashMap::new();
-        groups.insert(
+        let routing_policies = HashMap::from([(
             "chained".to_string(),
-            RawGroup {
-                upstream: None,
-                default_upstream: Some(RawUpstream {
-                    kind: "chain".to_string(),
-                    addr: "jp-pop".to_string(),
-                    username: None,
-                    password: None,
-                    tls: false,
-                    skip_cert_verify: false,
-                }),
-                proxy: Vec::new(),
-                block: Vec::new(),
+            RawRoutingPolicy {
+                routes: Vec::new(),
+                default_egress: Some("jp-pop".to_string()),
             },
-        );
-        let mut chains = HashMap::new();
-        chains.insert(
+        )]);
+        let egresses = HashMap::from([(
             "jp-pop".to_string(),
-            RawChain {
+            RawEgress::Chain {
                 members: members
                     .into_iter()
                     .map(|(id, priority, kind, addr)| RawChainMember {
@@ -1614,16 +1602,15 @@ mod tests {
                     })
                     .collect(),
             },
-        );
+        )]);
         let engine = Engine::new();
         engine.replace(
             Snapshot::compile(
                 RawSnapshot {
-                    schema_version: 2,
                     version: 1,
                     users,
-                    groups,
-                    chains,
+                    routing_policies,
+                    egresses,
                     ..Default::default()
                 },
                 "node-1",
@@ -1746,27 +1733,25 @@ mod tests {
                 up_rate: 0,
                 down_rate: 0,
                 max_connections: 0,
-                group: "open".to_string(),
+                policy: "open".to_string(),
                 frontends: Default::default(),
             },
         );
-        let mut groups = HashMap::new();
-        groups.insert(
-            "open".to_string(),
-            RawGroup {
-                upstream: None,
-                default_upstream: None,
-                proxy: Vec::new(),
-                block: Vec::new(),
-            },
-        );
+        let (routing_policies, egresses) = PolicySpec {
+            egress: None,
+            default_egress: None,
+            routed: Vec::new(),
+            blocked: Vec::new(),
+        }
+        .into_tables("open");
         let engine = Engine::new();
         engine.replace(
             Snapshot::compile(
                 RawSnapshot {
                     version: 1,
                     users,
-                    groups,
+                    routing_policies,
+                    egresses,
                     ..Default::default()
                 },
                 "node-1",

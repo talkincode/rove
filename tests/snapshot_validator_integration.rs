@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 fn fixture(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/snapshot_v4")
+        .join("tests/fixtures/snapshot")
         .join(name)
 }
 
@@ -68,12 +68,12 @@ fn temp_path(name: &str) -> PathBuf {
 }
 
 #[test]
-fn validates_v4_file_with_machine_readable_secret_safe_summary() {
+fn validates_a_file_with_a_machine_readable_secret_safe_summary() {
     let output = run_file("edge-1", &fixture("policies.json"));
     assert!(output.status.success());
     let json = json_output(&output);
     assert_eq!(json["ok"], true);
-    assert_eq!(json["schema_version"], 4);
+    assert_eq!(json["schema_version"], 1);
     assert_eq!(json["version"], 41);
     assert_eq!(json["users"], 3);
     assert_eq!(json["routing_policies"], 3);
@@ -96,7 +96,7 @@ fn validates_snapshot_from_default_stdin_input() {
     assert!(output.status.success());
     let json = json_output(&output);
     assert_eq!(json["ok"], true);
-    assert_eq!(json["schema_version"], 4);
+    assert_eq!(json["schema_version"], 1);
 }
 
 #[test]
@@ -139,7 +139,7 @@ fn node_id_selects_and_validates_the_matching_override() {
 
 #[test]
 fn malformed_json_and_missing_references_are_machine_failures_without_secrets() {
-    let malformed = run_stdin("edge-0", br#"{"schema_version":4,"#, &[]);
+    let malformed = run_stdin("edge-0", br#"{"schema_version":1,"#, &[]);
     assert!(!malformed.status.success());
     let malformed_json = json_output(&malformed);
     assert_eq!(malformed_json["ok"], false);
@@ -148,7 +148,7 @@ fn malformed_json_and_missing_references_are_machine_failures_without_secrets() 
     let secret = "validator-user-secret";
     let missing_ref = format!(
         r#"{{
-          "schema_version":4,
+          "schema_version":1,
           "version":1,
           "users":{{"alice":{{"password":"{secret}","policy":"p"}}}},
           "routing_policies":{{"p":{{"routes":[{{

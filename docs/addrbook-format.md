@@ -5,10 +5,10 @@ rove-addrbook 用来管理不适合反复塞进控制面快照的大型域名与
 1. `rove-abctl` 从本地清单和公开上游构建地址簿；
 2. `.rab` 保存确定性、带 SHA-256 完整性校验的发布工件；
 3. Rove 节点通过本地 `[addrbook]` 加载并热替换工件；
-4. 控制面快照用 `book:<category>` 决定哪些分类参与 `proxy` 或 `block`。
+4. 控制面快照用 route selector 里的 `book:<category>` 决定哪些分类参与分流或阻断。
 
 地址簿只回答“目标属于哪些分类”，**不决定用户、出口或允许/拒绝结果**。快照仍是策略唯一真相；
-同一个分类可以在一个组里用于 `proxy`，在另一个组里用于 `block`。
+同一个分类可以在不同 policy 的 route 里用于 `egress`，也可以用于 `block`。
 
 > **目标语义很重要**：地址簿匹配的是客户端请求中的目标域名或 IP 字面量，不会先解析域名再用解析结果
 > 查询 IP 分类。因此 AWS/Azure/GCP IP 段只会命中以 IP 字面量发起的请求；要按域名分流，必须同时提供
@@ -106,11 +106,11 @@ poll_interval_secs = 300
 
 ### 4. 在快照里引用分类
 
-推荐 schema v4，把 `book:<category>` 写进 route `selectors`：
+在当前快照 schema 里，把 `book:<category>` 写进 route `selectors`：
 
 ```json
 {
-  "schema_version": 4,
+  "schema_version": 1,
   "version": 42,
   "users": {
     "alice": { "password": "replace-me", "policy": "filtered" }
@@ -138,9 +138,7 @@ poll_interval_secs = 300
 }
 ```
 
-任何 `book:` 规则都要求 `schema_version >= 3`（v3 兼容 `groups.proxy/block`，v4 用
-`routing_policies.routes[].selectors`）。节点未配置地址簿、分类不存在或规则为空时，整份新快照
-拒收并保留上一份有效策略。
+节点未配置地址簿、分类不存在或规则为空时，整份新快照拒收并保留上一份有效策略。
 
 ## `.rab` v1 二进制格式
 
@@ -250,12 +248,15 @@ Rove v1 读取器另有 fail-closed 资源上限：最多 100,000 个分类、�
 
 ## 快照规则：`book:<category>`
 
-控制面快照在 route selector（schema v4）或兼容组的 `proxy` / `block`（schema v3）中引用
-addrbook 分类：
+控制面快照在 route selector 中引用 addrbook 分类：
 
 ```json
 {
-  "schema_version": 4,
+  "schema_version": 1,
+  "version": 42,
+  "users": {
+    "alice": { "password": "replace-me", "policy": "ads-policy" }
+  },
   "routing_policies": {
     "ads-policy": {
       "routes": [
@@ -270,9 +271,7 @@ addrbook 分类：
 }
 ```
 
-- 任何 `book:` 规则都要求快照 `schema_version >= 3`。这不是可选标记：旧节点
-  不认识该 scheme，会明确拒绝快照并保留旧策略，避免滚动升级时 fail-open。新控制面应输出
-  schema v4 + `selectors`。
+- `book:` 规则始终在当前快照 schema 的 `selectors` 中可用，不再有额外 schema 版本门槛。
 - 显式域名/IP 规则与 `book:` 分类按“或”组合（快照仍是“谁走哪”的唯一真相，
   addrbook 只提供地址数据）。
 - 快照编译期把 `book:` 模式解析成位图 selector 并**钉住当时的书**——
@@ -290,10 +289,9 @@ addrbook 分类：
 - 添加 `google/ads` 时会自动创建祖先 `google`；`book:google` 选择自身和全部子孙，
   `book:google/ads` 只选择该子树。没有通配符、排除或正则 selector。
 - 同一数组中的多个 `book:` 条目是“或”；显式域名/IP 与地址簿 selector 也是“或”。
-- `block` 与 `proxy` 同时命中时仍由组决策顺序决定：`block` 永远优先。
+- 路由仍按 `routes` 数组 first-match-wins；把更具体的 `block` / `direct` / `egress` route 放在前面。
 - scheme 前缀必须写成小写 `book:`；分类名本身匹配不区分大小写。
-- `book:` 只允许出现在组的 `proxy` / `block` 规则数组，也可以来自当前节点生效的
-  `node_overrides.{node_id}.groups`。
+- `book:` 只允许出现在 route `selectors` 中；节点级覆盖只替换已存在的 named egress，不改变 selector。
 
 ## Manifest 清单
 
@@ -505,10 +503,9 @@ rove-abctl diff book-current.rab book-20260723.rab --max-shrink 30
 
 ### 首次启用顺序
 
-1. 先升级所有节点到支持 schema v3+（推荐已支持 v4）和 `.rab` v1 的版本；
+1. 先升级所有节点到支持当前快照 schema 和 `.rab` v1 的版本；
 2. 给每个节点配置并部署一份已验证地址簿，确认启动日志中的 epoch/checksum；
-3. 再让控制面发布带 `book:` 规则的快照（推荐 `schema_version: 4` + route `selectors`；
-   兼容路径可用 `schema_version: 3` + `groups.proxy/block`）；
+3. 再让控制面发布带 `book:` route selector 的快照；
 4. 最后按节点/机房 canary 扩大地址簿更新范围。
 
 如果先发布 `book:` 快照，未配置地址簿的节点会按设计拒收它。不同节点使用不同 checksum 时，同一快照可能
@@ -603,8 +600,8 @@ docker run ... \
 | `rove-abctl build` 报 source 无有效记录 | 检查路径是否相对 manifest、文本是否只有注释、v2fly 是否只有 `regexp:`。 |
 | `query` 列出分类但退出 `1` | 目标命中了别的分类，未命中命令末尾指定的 selector；先不带分类运行查看全部命中。 |
 | 节点启动报 addrbook 错误 | 先运行 `rove-abctl verify`，再检查路径、权限、256 MiB 上限和容器挂载。 |
-| 快照报 `book: rules require schema_version 3` | 控制面把顶层 `schema_version` 升到 `3`；`version` 仍按内容更新单独递增。 |
-| 快照报 unknown category | 用 `inspect --categories` 核对完整分类名；先修快照引用或发布包含该分类的书。 |
+| 快照报 `no [addrbook]` | 节点未配置 `[addrbook]`，但快照引用了 `book:` selector；先配置并验证 `.rab`，或移除该 selector。 |
+| 快照报 `unknown addrbook category` | 用 `inspect --categories` 核对完整分类名；错误信息会带上未知分类名，先修快照引用或发布包含该分类的书。 |
 | 新书一直被拒绝 | 查看运行日志中的 `new addrbook rejected`；通常是最近快照引用了新书已删除的分类。 |
 | 域名没有命中 Provider IP 分类 | 这是预期：域名目标不会先 DNS 解析再查 IP 表；补充域名 source。 |
 | Docker 内看不到新书 | 确认挂载的是目录而非单文件，并在挂载目录内原子 rename。 |

@@ -205,9 +205,9 @@ struct NodeStatusMessage {
     elapsed_ms: Option<u128>,
     version: String,
     snapshot_version: u64,
-    /// Wire-schema version of the applied snapshot (1 = pre-chain schema).
-    /// Lets the control plane confirm the fleet runs a chain-capable
-    /// snapshot before switching groups to `kind = "chain"` references.
+    /// Wire-schema version of the applied snapshot. Lets the control plane
+    /// confirm every node in the fleet speaks the schema it is about to
+    /// publish before it rolls a snapshot out.
     snapshot_schema_version: u32,
     timestamp: u64,
 }
@@ -948,7 +948,10 @@ fn unix_ts() -> u64 {
 mod tests {
     use super::*;
     use crate::config::{MqttTls, MqttTopics};
-    use crate::model::{RawGroup, RawSnapshot, RawUpstream, RawUser, Snapshot};
+    use crate::model::{
+        RawAction, RawChainMember, RawEgress, RawRoute, RawRoutingPolicy, RawSnapshot, RawUpstream,
+        RawUser, Snapshot,
+    };
     use std::collections::HashMap;
 
     fn service_with_snapshot() -> MqttService {
@@ -962,25 +965,8 @@ mod tests {
                 up_rate: 10,
                 down_rate: 20,
                 max_connections: 2,
-                group: "open".to_string(),
+                policy: "open".to_string(),
                 frontends: Default::default(),
-            },
-        );
-        let mut groups = HashMap::new();
-        groups.insert(
-            "open".to_string(),
-            RawGroup {
-                upstream: Some(RawUpstream {
-                    kind: "socks5".to_string(),
-                    addr: "proxy.example.com:1080".to_string(),
-                    username: Some("upuser".to_string()),
-                    password: Some("uppass".to_string()),
-                    tls: true,
-                    skip_cert_verify: false,
-                }),
-                default_upstream: None,
-                proxy: vec!["example.com".to_string()],
-                block: vec!["full:blocked.example".to_string()],
             },
         );
         users.insert(
@@ -991,66 +977,95 @@ mod tests {
                 up_rate: 0,
                 down_rate: 0,
                 max_connections: 0,
-                group: "chained".to_string(),
+                policy: "chained".to_string(),
                 frontends: Default::default(),
             },
         );
-        groups.insert(
-            "chained".to_string(),
-            RawGroup {
-                upstream: Some(RawUpstream {
-                    kind: "chain".to_string(),
-                    addr: "jp-pop".to_string(),
-                    username: None,
-                    password: None,
-                    tls: false,
-                    skip_cert_verify: false,
-                }),
-                default_upstream: None,
-                proxy: vec!["example.com".to_string()],
-                block: vec![],
-            },
-        );
-        let mut chains = HashMap::new();
-        chains.insert(
-            "jp-pop".to_string(),
-            crate::model::RawChain {
-                members: vec![
-                    crate::model::RawChainMember {
-                        id: "jp-reverse-1".to_string(),
-                        priority: 1,
-                        backend: RawUpstream {
-                            kind: "reverse".to_string(),
-                            addr: "h1".to_string(),
-                            username: None,
-                            password: None,
-                            tls: false,
-                            skip_cert_verify: false,
+        let routing_policies = HashMap::from([
+            (
+                "open".to_string(),
+                RawRoutingPolicy {
+                    routes: vec![
+                        RawRoute {
+                            selectors: vec!["full:blocked.example".to_string()],
+                            action: RawAction::Block,
                         },
-                    },
-                    crate::model::RawChainMember {
-                        id: "jp-socks-2".to_string(),
-                        priority: 2,
-                        backend: RawUpstream {
-                            kind: "socks5".to_string(),
-                            addr: "10.2.2.1:1080".to_string(),
-                            username: Some("member-user".to_string()),
-                            password: Some("member-pass".to_string()),
-                            tls: false,
-                            skip_cert_verify: false,
+                        RawRoute {
+                            selectors: vec!["example.com".to_string()],
+                            action: RawAction::Egress {
+                                egress: "tls-socks".to_string(),
+                            },
                         },
+                    ],
+                    default_egress: None,
+                },
+            ),
+            (
+                "chained".to_string(),
+                RawRoutingPolicy {
+                    routes: vec![RawRoute {
+                        selectors: vec!["example.com".to_string()],
+                        action: RawAction::Egress {
+                            egress: "jp-pop".to_string(),
+                        },
+                    }],
+                    default_egress: None,
+                },
+            ),
+        ]);
+        let egresses = HashMap::from([
+            (
+                "tls-socks".to_string(),
+                RawEgress::Upstream {
+                    backend: RawUpstream {
+                        kind: "socks5".to_string(),
+                        addr: "proxy.example.com:1080".to_string(),
+                        username: Some("upuser".to_string()),
+                        password: Some("uppass".to_string()),
+                        tls: true,
+                        skip_cert_verify: false,
                     },
-                ],
-            },
-        );
+                },
+            ),
+            (
+                "jp-pop".to_string(),
+                RawEgress::Chain {
+                    members: vec![
+                        RawChainMember {
+                            id: "jp-reverse-1".to_string(),
+                            priority: 1,
+                            backend: RawUpstream {
+                                kind: "reverse".to_string(),
+                                addr: "h1".to_string(),
+                                username: None,
+                                password: None,
+                                tls: false,
+                                skip_cert_verify: false,
+                            },
+                        },
+                        RawChainMember {
+                            id: "jp-socks-2".to_string(),
+                            priority: 2,
+                            backend: RawUpstream {
+                                kind: "socks5".to_string(),
+                                addr: "10.2.2.1:1080".to_string(),
+                                username: Some("member-user".to_string()),
+                                password: Some("member-pass".to_string()),
+                                tls: false,
+                                skip_cert_verify: false,
+                            },
+                        },
+                    ],
+                },
+            ),
+        ]);
         engine.replace(
             Snapshot::compile(
                 RawSnapshot {
-                    schema_version: 2,
                     version: 7,
                     users,
-                    groups,
-                    chains,
+                    routing_policies,
+                    egresses,
                     ..Default::default()
                 },
                 "node-1",
@@ -1155,11 +1170,11 @@ mod tests {
     }
 
     #[test]
-    fn user_policy_query_exposes_v4_routes_and_named_egresses_without_credentials() {
+    fn user_policy_query_exposes_routes_and_named_egresses_without_credentials() {
         let svc = service_with_snapshot();
         let document = crate::model::decode_snapshot(
             br#"{
-                "schema_version": 4,
+                "schema_version": 1,
                 "version": 8,
                 "egresses": {
                     "tokyo": {
@@ -1182,7 +1197,7 @@ mod tests {
                     }
                 },
                 "users": {
-                    "v4-user": {
+                    "routed-user": {
                         "password": "login-secret",
                         "policy": "work"
                     }
@@ -1195,7 +1210,7 @@ mod tests {
 
         let (_, response) = svc
             .user_policy_response(
-                br#"{"request_id":"r-v4","reply_topic":"rove/replies/r-v4","data":{"username":"v4-user"}}"#,
+                br#"{"request_id":"r-routed","reply_topic":"rove/replies/r-routed","data":{"username":"routed-user"}}"#,
             )
             .unwrap();
         assert_eq!(response.status, STATUS_OK);
@@ -1330,8 +1345,7 @@ mod tests {
         assert!(status.success);
         assert!(status.updated);
         assert_eq!(status.snapshot_version, 42);
-        // The serving snapshot in the fixture is schema v2 (chain-capable).
-        assert_eq!(status.snapshot_schema_version, 2);
+        assert_eq!(status.snapshot_schema_version, crate::model::SCHEMA_VERSION);
         assert_eq!(status.elapsed_ms, Some(12));
     }
 

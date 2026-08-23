@@ -197,11 +197,11 @@ listen = "127.0.0.1:8080"
 rove validate-snapshot --node-id dev-local-01 snapshot.json
 ```
 
-本地试用不用真搭控制面——先手放一份缓存快照 `data/snapshot.json`，节点启动会先读它（schema v4）：
+本地试用不用真搭控制面——先手放一份缓存快照 `data/snapshot.json`，节点启动会先读它（当前快照 schema）：
 
 ```json
 {
-  "schema_version": 4,
+  "schema_version": 1,
   "version": 1,
   "users": { "alice": { "password": "s3cret", "policy": "open" } },
   "routing_policies": { "open": { "routes": [] } },

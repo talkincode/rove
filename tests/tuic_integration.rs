@@ -11,12 +11,15 @@ use std::time::Duration;
 
 use rove::config::TuicListener;
 use rove::engine::Engine;
-use rove::model::{RawFrontendCred, RawGroup, RawSnapshot, RawUpstream, RawUser, Snapshot};
+use rove::model::{RawFrontendCred, RawSnapshot, RawUpstream, RawUser, Snapshot};
 use rove::reverse::edge::{DuplicatePolicy, ReverseHopManager, ReverseListenerConfig};
 use rove::reverse::hop::{ReverseEdgeConfig, ReverseHopClientConfig};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, UdpSocket};
 use tokio::sync::oneshot;
+
+mod common;
+use common::PolicySpec;
 
 const TEST_CERT: &str = "-----BEGIN CERTIFICATE-----
 MIIDCTCCAfGgAwIBAgIUAhO4y5A+Ol+O93RC/xCs0+kTRkkwDQYJKoZIhvcNAQEL
@@ -159,9 +162,9 @@ async fn connect_client(port: u16) -> quinn::Connection {
 
 fn engine_with(default_reverse_hop: Option<&str>) -> Arc<Engine> {
     rove::tls::init_crypto();
-    let group = RawGroup {
-        upstream: None,
-        default_upstream: default_reverse_hop.map(|hop| RawUpstream {
+    let policy = PolicySpec {
+        egress: None,
+        default_egress: default_reverse_hop.map(|hop| RawUpstream {
             kind: "reverse".to_string(),
             addr: hop.to_string(),
             username: None,
@@ -169,16 +172,15 @@ fn engine_with(default_reverse_hop: Option<&str>) -> Arc<Engine> {
             tls: false,
             skip_cert_verify: false,
         }),
-        proxy: vec![],
-        block: vec![],
+        routed: vec![],
+        blocked: vec![],
     };
-    engine_with_group(group)
+    engine_with_policy(policy)
 }
 
-fn engine_with_group(group: RawGroup) -> Arc<Engine> {
+fn engine_with_policy(policy: PolicySpec) -> Arc<Engine> {
     rove::tls::init_crypto();
-    let mut groups = HashMap::new();
-    groups.insert("g".to_string(), group);
+    let (routing_policies, egresses) = policy.into_tables("g");
     let mut users = HashMap::new();
     users.insert(
         "alice".to_string(),
@@ -188,7 +190,7 @@ fn engine_with_group(group: RawGroup) -> Arc<Engine> {
             up_rate: 0,
             down_rate: 0,
             max_connections: 0,
-            group: "g".to_string(),
+            policy: "g".to_string(),
             frontends: HashMap::from([(
                 "tuic".to_string(),
                 RawFrontendCred {
@@ -201,7 +203,8 @@ fn engine_with_group(group: RawGroup) -> Arc<Engine> {
     let raw = RawSnapshot {
         version: 1,
         users,
-        groups,
+        routing_policies,
+        egresses,
         ..Default::default()
     };
     let snap = Snapshot::compile(raw, "node").expect("compile");
@@ -495,11 +498,11 @@ async fn tuic_connect_observe_sniff_records_host_without_changing_stream_bytes()
 
 #[tokio::test]
 async fn tuic_route_sniffed_block_prevents_requested_ip_dial() {
-    let engine = engine_with_group(RawGroup {
-        upstream: None,
-        default_upstream: None,
-        proxy: vec![],
-        block: vec!["blocked.example".to_string()],
+    let engine = engine_with_policy(PolicySpec {
+        egress: None,
+        default_egress: None,
+        routed: vec![],
+        blocked: vec!["blocked.example".to_string()],
     });
     let target = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let target_addr = target.local_addr().unwrap();
@@ -589,8 +592,8 @@ async fn tuic_route_unmatched_sniff_replays_captured_prefix_to_requested_ip() {
 async fn tuic_route_sniffed_proxy_selects_egress_but_dials_requested_ip() {
     let echo = start_tcp_echo().await;
     let (upstream, upstream_target) = start_http_connect_upstream().await;
-    let engine = engine_with_group(RawGroup {
-        upstream: Some(RawUpstream {
+    let engine = engine_with_policy(PolicySpec {
+        egress: Some(RawUpstream {
             kind: "http".to_string(),
             addr: upstream.clone(),
             username: None,
@@ -598,9 +601,9 @@ async fn tuic_route_sniffed_proxy_selects_egress_but_dials_requested_ip() {
             tls: false,
             skip_cert_verify: false,
         }),
-        default_upstream: None,
-        proxy: vec!["route.example".to_string()],
-        block: vec![],
+        default_egress: None,
+        routed: vec!["route.example".to_string()],
+        blocked: vec![],
     });
     let (logger, mut records) = rove::access_log::AccessLogger::for_test();
     let stats = rove::stats::TrafficStats::new();

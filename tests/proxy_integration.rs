@@ -5,7 +5,7 @@ use rove::diagnostics::{
 };
 use rove::engine::Engine;
 use rove::inbound::{http, socks5, Ctx};
-use rove::model::{RawGroup, RawSnapshot, RawUpstream, RawUser, Snapshot};
+use rove::model::{RawSnapshot, RawUpstream, RawUser, Snapshot};
 use rove::util::{read_http_head, read_http_head_with_remainder};
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -16,6 +16,9 @@ use tokio::net::TcpListener;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 
+mod common;
+use common::PolicySpec;
+
 const USERNAME: &str = "alice";
 const PASSWORD: &str = "secret";
 const RATE_LIMIT_BYTES_PER_SEC: u64 = 16 * 1024;
@@ -24,11 +27,11 @@ const RATE_LIMIT_TEST_BYTES: usize = 48 * 1024;
 #[tokio::test]
 async fn http_absolute_get_forwards_origin_form_and_strips_proxy_headers() {
     let (origin_addr, captured, origin_task) = start_http_origin(b"get-ok").await;
-    let engine = engine_with_group(RawGroup {
-        upstream: None,
-        default_upstream: None,
-        proxy: Vec::new(),
-        block: Vec::new(),
+    let engine = engine_with_policy(PolicySpec {
+        egress: None,
+        default_egress: None,
+        routed: Vec::new(),
+        blocked: Vec::new(),
     });
     let (mut client, proxy_task) = spawn_http_proxy(engine);
     let token = base64::engine::general_purpose::STANDARD.encode(format!("{USERNAME}:{PASSWORD}"));
@@ -67,11 +70,11 @@ async fn http_absolute_get_forwards_origin_form_and_strips_proxy_headers() {
 #[tokio::test]
 async fn http_absolute_post_forwards_body_sent_with_request_head() {
     let (origin_addr, captured, origin_task) = start_http_origin(b"post-ok").await;
-    let engine = engine_with_group(RawGroup {
-        upstream: None,
-        default_upstream: None,
-        proxy: Vec::new(),
-        block: Vec::new(),
+    let engine = engine_with_policy(PolicySpec {
+        egress: None,
+        default_egress: None,
+        routed: Vec::new(),
+        blocked: Vec::new(),
     });
     let (mut client, proxy_task) = spawn_http_proxy(engine);
     let token = base64::engine::general_purpose::STANDARD.encode(format!("{USERNAME}:{PASSWORD}"));
@@ -102,11 +105,11 @@ async fn http_absolute_post_forwards_body_sent_with_request_head() {
 async fn http_absolute_request_requires_auth_before_dialing_origin() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let origin_addr = listener.local_addr().unwrap();
-    let engine = engine_with_group(RawGroup {
-        upstream: None,
-        default_upstream: None,
-        proxy: Vec::new(),
-        block: Vec::new(),
+    let engine = engine_with_policy(PolicySpec {
+        egress: None,
+        default_egress: None,
+        routed: Vec::new(),
+        blocked: Vec::new(),
     });
     let (mut client, proxy_task) = spawn_http_proxy(engine);
     client
@@ -128,11 +131,11 @@ async fn http_absolute_request_requires_auth_before_dialing_origin() {
 #[tokio::test]
 async fn http_connect_direct_tunnels_bytes() {
     let (target_addr, echo_task) = start_echo_server().await;
-    let engine = engine_with_group(RawGroup {
-        upstream: None,
-        default_upstream: None,
-        proxy: Vec::new(),
-        block: Vec::new(),
+    let engine = engine_with_policy(PolicySpec {
+        egress: None,
+        default_egress: None,
+        routed: Vec::new(),
+        blocked: Vec::new(),
     });
     let (mut client, proxy_task) = spawn_http_proxy(engine);
 
@@ -162,11 +165,11 @@ async fn http_connect_direct_tunnels_bytes() {
 #[tokio::test]
 async fn http_connect_observe_sniff_records_host_without_changing_tunnel_bytes() {
     let (target_addr, echo_task) = start_echo_server().await;
-    let engine = engine_with_group(RawGroup {
-        upstream: None,
-        default_upstream: None,
-        proxy: Vec::new(),
-        block: Vec::new(),
+    let engine = engine_with_policy(PolicySpec {
+        egress: None,
+        default_egress: None,
+        routed: Vec::new(),
+        blocked: Vec::new(),
     });
     let (logger, mut records) = rove::access_log::AccessLogger::for_test();
     let stats = rove::stats::TrafficStats::new();
@@ -195,11 +198,11 @@ async fn http_connect_observe_sniff_records_host_without_changing_tunnel_bytes()
 #[tokio::test]
 async fn access_log_file_records_bytes_for_successful_http_tunnel() {
     let (target_addr, echo_task) = start_echo_server().await;
-    let engine = engine_with_group(RawGroup {
-        upstream: None,
-        default_upstream: None,
-        proxy: Vec::new(),
-        block: Vec::new(),
+    let engine = engine_with_policy(PolicySpec {
+        egress: None,
+        default_egress: None,
+        routed: Vec::new(),
+        blocked: Vec::new(),
     });
 
     let dir = temp_access_log_dir("http-success");
@@ -264,11 +267,11 @@ async fn access_log_file_records_bytes_for_successful_http_tunnel() {
 #[tokio::test]
 async fn socks5_connect_direct_tunnels_bytes() {
     let (target_addr, echo_task) = start_echo_server().await;
-    let engine = engine_with_group(RawGroup {
-        upstream: None,
-        default_upstream: None,
-        proxy: Vec::new(),
-        block: Vec::new(),
+    let engine = engine_with_policy(PolicySpec {
+        egress: None,
+        default_egress: None,
+        routed: Vec::new(),
+        blocked: Vec::new(),
     });
     let (mut client, proxy_task) = spawn_socks5_proxy(engine);
 
@@ -311,11 +314,11 @@ async fn socks5_connect_direct_tunnels_bytes() {
 
 #[tokio::test]
 async fn http_connect_blocked_by_policy_returns_403_without_dialing_out() {
-    let engine = engine_with_group(RawGroup {
-        upstream: None,
-        default_upstream: None,
-        proxy: Vec::new(),
-        block: vec!["blocked.example".to_string()],
+    let engine = engine_with_policy(PolicySpec {
+        egress: None,
+        default_egress: None,
+        routed: Vec::new(),
+        blocked: vec!["blocked.example".to_string()],
     });
     let (mut client, proxy_task) = spawn_http_proxy(engine);
 
@@ -337,11 +340,11 @@ async fn http_connect_blocked_by_policy_returns_403_without_dialing_out() {
 
 #[tokio::test]
 async fn diagnostic_session_emits_redacted_policy_event_for_http_block() {
-    let engine = engine_with_group(RawGroup {
-        upstream: None,
-        default_upstream: None,
-        proxy: Vec::new(),
-        block: vec!["blocked.example".to_string()],
+    let engine = engine_with_policy(PolicySpec {
+        egress: None,
+        default_egress: None,
+        routed: Vec::new(),
+        blocked: vec!["blocked.example".to_string()],
     });
     let (registry, mut events) = diagnostics_registry();
     arm_session(&registry, "diag-http", USERNAME);
@@ -378,11 +381,11 @@ async fn diagnostic_session_emits_redacted_policy_event_for_http_block() {
 #[tokio::test]
 async fn diagnostic_session_emits_splice_event_for_socks5_success() {
     let (target_addr, echo_task) = start_echo_server().await;
-    let engine = engine_with_group(RawGroup {
-        upstream: None,
-        default_upstream: None,
-        proxy: Vec::new(),
-        block: Vec::new(),
+    let engine = engine_with_policy(PolicySpec {
+        egress: None,
+        default_egress: None,
+        routed: Vec::new(),
+        blocked: Vec::new(),
     });
     let (registry, mut events) = diagnostics_registry();
     arm_session(&registry, "diag-socks", USERNAME);
@@ -412,11 +415,11 @@ async fn diagnostic_session_emits_splice_event_for_socks5_success() {
 #[tokio::test]
 async fn no_diagnostic_events_without_active_session() {
     let (target_addr, echo_task) = start_echo_server().await;
-    let engine = engine_with_group(RawGroup {
-        upstream: None,
-        default_upstream: None,
-        proxy: Vec::new(),
-        block: Vec::new(),
+    let engine = engine_with_policy(PolicySpec {
+        egress: None,
+        default_egress: None,
+        routed: Vec::new(),
+        blocked: Vec::new(),
     });
     // Registry is wired but no session is armed.
     let (registry, mut events) = diagnostics_registry();
@@ -442,11 +445,11 @@ async fn http_connect_max_connections_rejects_second_tunnel_then_releases() {
         0,
         0,
         1,
-        RawGroup {
-            upstream: None,
-            default_upstream: None,
-            proxy: Vec::new(),
-            block: Vec::new(),
+        PolicySpec {
+            egress: None,
+            default_egress: None,
+            routed: Vec::new(),
+            blocked: Vec::new(),
         },
     );
 
@@ -481,11 +484,11 @@ async fn socks5_max_connections_rejects_second_tunnel_then_releases() {
         0,
         0,
         1,
-        RawGroup {
-            upstream: None,
-            default_upstream: None,
-            proxy: Vec::new(),
-            block: Vec::new(),
+        PolicySpec {
+            egress: None,
+            default_egress: None,
+            routed: Vec::new(),
+            blocked: Vec::new(),
         },
     );
 
@@ -518,11 +521,11 @@ async fn http_connect_down_rate_throttles_target_to_client_bytes() {
     let engine = engine_with_rates(
         0,
         RATE_LIMIT_BYTES_PER_SEC,
-        RawGroup {
-            upstream: None,
-            default_upstream: None,
-            proxy: Vec::new(),
-            block: Vec::new(),
+        PolicySpec {
+            egress: None,
+            default_egress: None,
+            routed: Vec::new(),
+            blocked: Vec::new(),
         },
     );
     let (mut client, proxy_task) = spawn_http_proxy(engine);
@@ -551,11 +554,11 @@ async fn http_connect_up_rate_throttles_client_to_target_bytes() {
     let engine = engine_with_rates(
         RATE_LIMIT_BYTES_PER_SEC,
         0,
-        RawGroup {
-            upstream: None,
-            default_upstream: None,
-            proxy: Vec::new(),
-            block: Vec::new(),
+        PolicySpec {
+            egress: None,
+            default_egress: None,
+            routed: Vec::new(),
+            blocked: Vec::new(),
         },
     );
     let (mut client, proxy_task) = spawn_http_proxy(engine);
@@ -580,19 +583,19 @@ async fn http_connect_up_rate_throttles_client_to_target_bytes() {
     target_task.await.unwrap();
 }
 
-fn engine_with_group(group: RawGroup) -> Arc<Engine> {
-    engine_with_rates(0, 0, group)
+fn engine_with_policy(policy: PolicySpec) -> Arc<Engine> {
+    engine_with_rates(0, 0, policy)
 }
 
-fn engine_with_rates(up_rate: u64, down_rate: u64, group: RawGroup) -> Arc<Engine> {
-    engine_with_limits(up_rate, down_rate, 0, group)
+fn engine_with_rates(up_rate: u64, down_rate: u64, policy: PolicySpec) -> Arc<Engine> {
+    engine_with_limits(up_rate, down_rate, 0, policy)
 }
 
 fn engine_with_limits(
     up_rate: u64,
     down_rate: u64,
     max_connections: usize,
-    group: RawGroup,
+    policy: PolicySpec,
 ) -> Arc<Engine> {
     let mut users = HashMap::new();
     users.insert(
@@ -603,20 +606,20 @@ fn engine_with_limits(
             up_rate,
             down_rate,
             max_connections,
-            group: "default".to_string(),
+            policy: "default".to_string(),
             frontends: Default::default(),
         },
     );
 
-    let mut groups = HashMap::new();
-    groups.insert("default".to_string(), group);
+    let (routing_policies, egresses) = policy.into_tables("default");
 
     let engine = Engine::new();
     let snapshot = Snapshot::compile(
         RawSnapshot {
             version: 1,
             users,
-            groups,
+            routing_policies,
+            egresses,
             ..Default::default()
         },
         "node-1",
@@ -677,11 +680,11 @@ async fn establish_socks5_tunnel(client: &mut DuplexStream, target_addr: SocketA
 #[tokio::test]
 async fn socks5_connect_observe_sniff_records_host_without_changing_tunnel_bytes() {
     let (target_addr, echo_task) = start_echo_server().await;
-    let engine = engine_with_group(RawGroup {
-        upstream: None,
-        default_upstream: None,
-        proxy: Vec::new(),
-        block: Vec::new(),
+    let engine = engine_with_policy(PolicySpec {
+        egress: None,
+        default_egress: None,
+        routed: Vec::new(),
+        blocked: Vec::new(),
     });
     let (logger, mut records) = rove::access_log::AccessLogger::for_test();
     let stats = rove::stats::TrafficStats::new();
@@ -709,11 +712,11 @@ async fn socks5_connect_observe_sniff_records_host_without_changing_tunnel_bytes
 #[tokio::test]
 async fn socks5_connect_observe_sniff_forwards_unsupported_payload_and_counts_outcome() {
     let (target_addr, echo_task) = start_echo_server().await;
-    let engine = engine_with_group(RawGroup {
-        upstream: None,
-        default_upstream: None,
-        proxy: Vec::new(),
-        block: Vec::new(),
+    let engine = engine_with_policy(PolicySpec {
+        egress: None,
+        default_egress: None,
+        routed: Vec::new(),
+        blocked: Vec::new(),
     });
     let (logger, mut records) = rove::access_log::AccessLogger::for_test();
     let stats = rove::stats::TrafficStats::new();
@@ -740,11 +743,11 @@ async fn socks5_connect_observe_sniff_forwards_unsupported_payload_and_counts_ou
 async fn http_connect_route_sniffed_block_prevents_requested_ip_dial() {
     let target = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let target_addr = target.local_addr().unwrap();
-    let engine = engine_with_group(RawGroup {
-        upstream: None,
-        default_upstream: None,
-        proxy: Vec::new(),
-        block: vec!["blocked.example".to_string()],
+    let engine = engine_with_policy(PolicySpec {
+        egress: None,
+        default_egress: None,
+        routed: Vec::new(),
+        blocked: vec!["blocked.example".to_string()],
     });
     let (logger, mut records) = rove::access_log::AccessLogger::for_test();
     let stats = rove::stats::TrafficStats::new();
@@ -783,11 +786,11 @@ async fn http_connect_route_sniffed_block_prevents_requested_ip_dial() {
 #[tokio::test]
 async fn http_connect_route_unmatched_sniff_replays_captured_prefix_to_requested_ip() {
     let (target_addr, echo_task) = start_echo_server().await;
-    let engine = engine_with_group(RawGroup {
-        upstream: None,
-        default_upstream: None,
-        proxy: Vec::new(),
-        block: Vec::new(),
+    let engine = engine_with_policy(PolicySpec {
+        egress: None,
+        default_egress: None,
+        routed: Vec::new(),
+        blocked: Vec::new(),
     });
     let (logger, mut records) = rove::access_log::AccessLogger::for_test();
     let stats = rove::stats::TrafficStats::new();
@@ -815,8 +818,8 @@ async fn http_connect_route_unmatched_sniff_replays_captured_prefix_to_requested
 async fn http_connect_route_sniffed_proxy_selects_egress_but_dials_requested_ip() {
     let (echo_addr, echo_task) = start_echo_server().await;
     let (upstream, upstream_target) = start_http_connect_upstream().await;
-    let engine = engine_with_group(RawGroup {
-        upstream: Some(RawUpstream {
+    let engine = engine_with_policy(PolicySpec {
+        egress: Some(RawUpstream {
             kind: "http".to_string(),
             addr: upstream.clone(),
             username: None,
@@ -824,9 +827,9 @@ async fn http_connect_route_sniffed_proxy_selects_egress_but_dials_requested_ip(
             tls: false,
             skip_cert_verify: false,
         }),
-        default_upstream: None,
-        proxy: vec!["route.example".to_string()],
-        block: Vec::new(),
+        default_egress: None,
+        routed: vec!["route.example".to_string()],
+        blocked: Vec::new(),
     });
     let (logger, mut records) = rove::access_log::AccessLogger::for_test();
     let stats = rove::stats::TrafficStats::new();
@@ -864,11 +867,11 @@ async fn http_connect_route_sniffed_proxy_selects_egress_but_dials_requested_ip(
 async fn socks5_connect_route_sniffed_block_prevents_requested_ip_dial() {
     let target = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let target_addr = target.local_addr().unwrap();
-    let engine = engine_with_group(RawGroup {
-        upstream: None,
-        default_upstream: None,
-        proxy: Vec::new(),
-        block: vec!["blocked.example".to_string()],
+    let engine = engine_with_policy(PolicySpec {
+        egress: None,
+        default_egress: None,
+        routed: Vec::new(),
+        blocked: vec!["blocked.example".to_string()],
     });
     let (logger, mut records) = rove::access_log::AccessLogger::for_test();
     let stats = rove::stats::TrafficStats::new();
@@ -906,8 +909,8 @@ async fn socks5_connect_route_sniffed_block_prevents_requested_ip_dial() {
 async fn socks5_connect_route_sniffed_proxy_selects_egress_but_dials_requested_ip() {
     let (echo_addr, echo_task) = start_echo_server().await;
     let (upstream, upstream_target) = start_http_connect_upstream().await;
-    let engine = engine_with_group(RawGroup {
-        upstream: Some(RawUpstream {
+    let engine = engine_with_policy(PolicySpec {
+        egress: Some(RawUpstream {
             kind: "http".to_string(),
             addr: upstream.clone(),
             username: None,
@@ -915,9 +918,9 @@ async fn socks5_connect_route_sniffed_proxy_selects_egress_but_dials_requested_i
             tls: false,
             skip_cert_verify: false,
         }),
-        default_upstream: None,
-        proxy: vec!["route.example".to_string()],
-        block: Vec::new(),
+        default_egress: None,
+        routed: vec!["route.example".to_string()],
+        blocked: Vec::new(),
     });
     let (logger, mut records) = rove::access_log::AccessLogger::for_test();
     let stats = rove::stats::TrafficStats::new();
@@ -953,11 +956,11 @@ async fn socks5_connect_route_sniffed_proxy_selects_egress_but_dials_requested_i
 
 #[tokio::test]
 async fn http_connect_unresolvable_host_records_dns_stage() {
-    let engine = engine_with_group(RawGroup {
-        upstream: None,
-        default_upstream: None,
-        proxy: Vec::new(),
-        block: Vec::new(),
+    let engine = engine_with_policy(PolicySpec {
+        egress: None,
+        default_egress: None,
+        routed: Vec::new(),
+        blocked: Vec::new(),
     });
     let (logger, mut records) = rove::access_log::AccessLogger::for_test();
     let (mut client, proxy_task) = spawn_http_proxy_with_access_log(engine, logger);
@@ -989,11 +992,11 @@ async fn http_connect_unresolvable_host_records_dns_stage() {
 
 #[tokio::test]
 async fn http_connect_refused_port_records_dial_stage() {
-    let engine = engine_with_group(RawGroup {
-        upstream: None,
-        default_upstream: None,
-        proxy: Vec::new(),
-        block: Vec::new(),
+    let engine = engine_with_policy(PolicySpec {
+        egress: None,
+        default_egress: None,
+        routed: Vec::new(),
+        blocked: Vec::new(),
     });
     let (logger, mut records) = rove::access_log::AccessLogger::for_test();
     let (mut client, proxy_task) = spawn_http_proxy_with_access_log(engine, logger);
@@ -1030,8 +1033,8 @@ async fn http_connect_upstream_tls_handshake_failure_records_tls_stage() {
             let _ = socket.read(&mut buf).await;
         }
     });
-    let engine = engine_with_group(RawGroup {
-        upstream: Some(RawUpstream {
+    let engine = engine_with_policy(PolicySpec {
+        egress: Some(RawUpstream {
             kind: "http".to_string(),
             addr: hop.to_string(),
             username: None,
@@ -1039,9 +1042,9 @@ async fn http_connect_upstream_tls_handshake_failure_records_tls_stage() {
             tls: true,
             skip_cert_verify: true,
         }),
-        default_upstream: None,
-        proxy: vec!["example.com".to_string()],
-        block: Vec::new(),
+        default_egress: None,
+        routed: vec!["example.com".to_string()],
+        blocked: Vec::new(),
     });
     let (logger, mut records) = rove::access_log::AccessLogger::for_test();
     let (mut client, proxy_task) = spawn_http_proxy_with_access_log(engine, logger);

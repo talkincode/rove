@@ -5,7 +5,7 @@
 use crate::addrbook::{AddrBook, AddrBookService};
 use crate::config::ControlPlane;
 use crate::engine::Engine;
-use crate::model::{decode_snapshot, Snapshot, SnapshotDocument};
+use crate::model::{decode_snapshot, RawSnapshot, Snapshot};
 use std::fs::OpenOptions;
 use std::io::Write;
 #[cfg(unix)]
@@ -48,9 +48,9 @@ pub struct Syncer {
     health: Arc<StdMutex<SyncHealth>>,
     addrbook: Option<Arc<AddrBookService>>,
     /// Last snapshot document that compiled successfully. Kept (as the decoded
-    /// [`SnapshotDocument`], legacy or v4) so an addrbook swap can trial-
+    /// [`RawSnapshot`]) so an addrbook swap can trial-
     /// recompile the exact same policy against the new book.
-    last_raw: Arc<StdMutex<Option<SnapshotDocument>>>,
+    last_raw: Arc<StdMutex<Option<RawSnapshot>>>,
 }
 
 impl Syncer {
@@ -97,7 +97,7 @@ impl Syncer {
             .clone();
         match raw {
             Some(doc) => {
-                let version = doc.version();
+                let version = doc.version;
                 let snapshot = Snapshot::compile_with_book(doc, &self.node_id, Some(&book))
                     .context("recompile snapshot against new addrbook")?;
                 service.install(book);
@@ -221,7 +221,7 @@ impl Syncer {
         }
     }
 
-    fn apply_remote(&self, doc: SnapshotDocument, source: &str, start: Instant) -> SyncOutcome {
+    fn apply_remote(&self, doc: RawSnapshot, source: &str, start: Instant) -> SyncOutcome {
         let doc_for_cache = doc.clone();
         let book = self.current_book();
         let (snapshot, meta) = match compile_snapshot(
@@ -242,7 +242,7 @@ impl Syncer {
         self.replace_snapshot(snapshot, meta, source, start)
     }
 
-    fn apply(&self, doc: SnapshotDocument, source: &str, start: Instant) -> SyncOutcome {
+    fn apply(&self, doc: RawSnapshot, source: &str, start: Instant) -> SyncOutcome {
         let book = self.current_book();
         let doc_to_remember = doc.clone();
         match compile_snapshot(
@@ -261,7 +261,7 @@ impl Syncer {
         }
     }
 
-    fn remember_raw(&self, doc: SnapshotDocument) {
+    fn remember_raw(&self, doc: RawSnapshot) {
         *self.last_raw.lock().expect("sync last_raw state poisoned") = Some(doc);
     }
 
@@ -276,7 +276,7 @@ impl Syncer {
         info!(
             version = meta.version,
             users = meta.users,
-            groups = meta.groups,
+            policies = meta.policies,
             source,
             "snapshot applied"
         );
@@ -302,27 +302,21 @@ fn unix_timestamp_secs() -> u64 {
 struct SnapshotMeta {
     version: u64,
     users: usize,
-    groups: usize,
+    policies: usize,
 }
 
 fn compile_snapshot(
-    doc: SnapshotDocument,
+    doc: RawSnapshot,
     source: &str,
     start: Instant,
     current_version: u64,
     node_id: &str,
     book: Option<&Arc<AddrBook>>,
 ) -> Result<(Snapshot, SnapshotMeta), SyncOutcome> {
-    // `groups` here is a coarse "routing unit" count for logging: compiled
-    // groups for legacy snapshots, routing policies for v4.
-    let (users, groups) = match &doc {
-        SnapshotDocument::Legacy(r) => (r.users.len(), r.groups.len()),
-        SnapshotDocument::V4(r) => (r.users.len(), r.routing_policies.len()),
-    };
     let meta = SnapshotMeta {
-        version: doc.version(),
-        users,
-        groups,
+        version: doc.version,
+        users: doc.users.len(),
+        policies: doc.routing_policies.len(),
     };
     match Snapshot::compile_with_book(doc, node_id, book) {
         Ok(snapshot) => Ok((snapshot, meta)),
@@ -363,7 +357,7 @@ async fn fetch(
     client: &reqwest::Client,
     cfg: &ControlPlane,
     since: u64,
-) -> anyhow::Result<Option<SnapshotDocument>> {
+) -> anyhow::Result<Option<RawSnapshot>> {
     let separator = if cfg.snapshot_url.contains('?') {
         '&'
     } else {
@@ -379,13 +373,13 @@ async fn fetch(
     }
     let body = read_limited_response(resp, MAX_SNAPSHOT_BYTES).await?;
     let doc = decode_snapshot(&body)?;
-    if doc.version() <= since {
+    if doc.version <= since {
         return Ok(None);
     }
     Ok(Some(doc))
 }
 
-fn load_cache(path: &str) -> anyhow::Result<Option<SnapshotDocument>> {
+fn load_cache(path: &str) -> anyhow::Result<Option<RawSnapshot>> {
     let path = Path::new(path);
     if !path.exists() {
         return Ok(None);
@@ -432,8 +426,8 @@ async fn read_limited_response(mut resp: reqwest::Response, cap: usize) -> anyho
     Ok(body)
 }
 
-fn save_cache(path: &str, doc: &SnapshotDocument) -> anyhow::Result<()> {
-    let bytes = doc.to_cache_bytes()?;
+fn save_cache(path: &str, doc: &RawSnapshot) -> anyhow::Result<()> {
+    let bytes = serde_json::to_vec(doc)?;
     if bytes.len() > MAX_SNAPSHOT_BYTES {
         anyhow::bail!(
             "snapshot cache payload is too large: {} > {} bytes",
@@ -520,52 +514,37 @@ mod tests {
     #[test]
     fn load_cache_accepts_valid_snapshot() {
         let path = temp_path("valid-snapshot.json");
-        std::fs::write(&path, br#"{"version":1,"users":{},"groups":{}}"#).unwrap();
+        std::fs::write(
+            &path,
+            br#"{"schema_version":1,"version":1,"users":{},"routing_policies":{}}"#,
+        )
+        .unwrap();
 
         let raw = load_cache(&path).unwrap().unwrap();
-        assert_eq!(raw.version(), 1);
+        assert_eq!(raw.version, 1);
 
         let _ = std::fs::remove_file(path);
     }
 
+    /// A cache file written by a foreign producer (here: the pre-rewrite
+    /// `userdata.json` shape) must be refused whole rather than decoded into a
+    /// snapshot with no routing intent. Silently accepting it would leave the
+    /// node serving users with an empty policy table.
     #[test]
-    fn load_cache_accepts_legacy_userdata() {
-        let path = temp_path("legacy-userdata.json");
+    fn load_cache_rejects_a_foreign_document_shape() {
+        let path = temp_path("foreign-shape.json");
         std::fs::write(
             &path,
             br#"{
                 "timestamp": 5,
-                "user_list": [
-                    {
-                        "username": "alice",
-                        "password": "secret",
-                        "expire": "2099-12-31",
-                        "code": "A",
-                        "up_rate": "0",
-                        "down_rate": "0"
-                    }
-                ],
-                "address_list": [
-                    {"tag": "GitHub", "address": "github.com", "type": "domain"}
-                ],
-                "routings": [
-                    {
-                        "server_tag": "edge",
-                        "server_addr": "proxy.example.com:8443",
-                        "connector_type": "http",
-                        "dialer_type": "tls",
-                        "codes": ["A"],
-                        "rules": [{"tag": "GitHub", "action": "proxy"}]
-                    }
-                ]
+                "user_list": [{"username": "alice", "password": "secret"}],
+                "routings": []
             }"#,
         )
         .unwrap();
 
-        let raw = load_cache(&path).unwrap().unwrap().into_legacy().unwrap();
-        assert_eq!(raw.version, 5);
-        assert_eq!(raw.users["alice"].group, "legacy-route-0-edge");
-        assert_eq!(raw.groups["legacy-route-0-edge"].proxy, vec!["github.com"]);
+        let err = load_cache(&path).unwrap_err();
+        assert!(err.to_string().contains("unknown field"), "error was {err}");
 
         let _ = std::fs::remove_file(path);
     }
@@ -575,21 +554,19 @@ mod tests {
         let path = temp_path("roundtrip-snapshot.json");
         let raw = RawSnapshot {
             version: 2,
-            users: Default::default(),
-            groups: Default::default(),
             ..Default::default()
         };
 
-        save_cache(&path, &raw.into()).unwrap();
+        save_cache(&path, &raw).unwrap();
         let loaded = load_cache(&path).unwrap().unwrap();
 
-        assert_eq!(loaded.version(), 2);
+        assert_eq!(loaded.version, 2);
         let _ = std::fs::remove_file(path);
     }
 
     #[test]
-    fn save_cache_round_trips_v2_chain_snapshot_with_overrides() {
-        use crate::model::{NodeOverride, RawChain, RawChainMember, RawGroup, RawUpstream};
+    fn save_cache_round_trips_chain_egress_snapshot_with_overrides() {
+        use crate::model::{NodeOverride, RawChainMember, RawEgress, RawUpstream};
 
         let path = temp_path("roundtrip-chain-snapshot.json");
         let member = |id: &str, priority: u32| RawChainMember {
@@ -604,69 +581,48 @@ mod tests {
                 skip_cert_verify: false,
             },
         };
-        let mut chains = std::collections::HashMap::new();
-        chains.insert(
+        let egresses = std::collections::HashMap::from([(
             "jp-pop".to_string(),
-            RawChain {
+            RawEgress::Chain {
                 members: vec![member("jp-1", 1), member("jp-2", 2)],
             },
-        );
-        let mut groups = std::collections::HashMap::new();
-        groups.insert(
-            "rule-a".to_string(),
-            RawGroup {
-                upstream: Some(RawUpstream {
-                    kind: "chain".to_string(),
-                    addr: "jp-pop".to_string(),
-                    username: None,
-                    password: None,
-                    tls: false,
-                    skip_cert_verify: false,
-                }),
-                default_upstream: None,
-                proxy: vec!["example.com".to_string()],
-                block: vec![],
-            },
-        );
-        let mut node_overrides = std::collections::HashMap::new();
-        node_overrides.insert(
+        )]);
+        let node_overrides = std::collections::HashMap::from([(
             "edge-tokyo-01".to_string(),
             NodeOverride {
-                groups: Default::default(),
-                chains: std::collections::HashMap::from([(
+                egresses: std::collections::HashMap::from([(
                     "jp-pop".to_string(),
-                    RawChain {
+                    RawEgress::Chain {
                         members: vec![member("local-1", 1)],
                     },
                 )]),
             },
-        );
+        )]);
         let raw = RawSnapshot {
-            schema_version: 2,
             version: 13,
-            users: Default::default(),
-            groups,
-            chains,
+            egresses,
             node_overrides,
+            ..Default::default()
         };
 
-        save_cache(&path, &raw.into()).unwrap();
-        let loaded = load_cache(&path).unwrap().unwrap().into_legacy().unwrap();
-        // The cache round-trip must preserve schema_version, chains and
-        // override chains byte-for-byte semantically — a node restarting from
-        // cache keeps its failover configuration.
-        assert_eq!(loaded.schema_version, 2);
+        save_cache(&path, &raw).unwrap();
+        let loaded = load_cache(&path).unwrap().unwrap();
+        // The cache round-trip must preserve chain members and per-node
+        // override chains semantically — a node restarting from cache keeps
+        // its failover configuration.
+        assert_eq!(loaded.schema_version, crate::model::SCHEMA_VERSION);
         assert_eq!(loaded.version, 13);
-        assert_eq!(loaded.chains["jp-pop"].members.len(), 2);
-        assert_eq!(loaded.chains["jp-pop"].members[0].id, "jp-1");
-        assert_eq!(
-            loaded.groups["rule-a"].upstream.as_ref().unwrap().kind,
-            "chain"
-        );
-        assert_eq!(
-            loaded.node_overrides["edge-tokyo-01"].chains["jp-pop"].members[0].id,
-            "local-1"
-        );
+        let RawEgress::Chain { members } = &loaded.egresses["jp-pop"] else {
+            panic!("base egress lost its chain shape");
+        };
+        assert_eq!(members.len(), 2);
+        assert_eq!(members[0].id, "jp-1");
+        let RawEgress::Chain { members } =
+            &loaded.node_overrides["edge-tokyo-01"].egresses["jp-pop"]
+        else {
+            panic!("override egress lost its chain shape");
+        };
+        assert_eq!(members[0].id, "local-1");
         let _ = std::fs::remove_file(path);
     }
 
@@ -675,7 +631,7 @@ mod tests {
         let path = temp_path("future-schema-snapshot.json");
         std::fs::write(
             &path,
-            br#"{"schema_version": 99, "version": 50, "users": {}, "groups": {}}"#,
+            br#"{"schema_version": 99, "version": 50, "users": {}, "routing_policies": {}}"#,
         )
         .unwrap();
 
@@ -711,12 +667,10 @@ mod tests {
         let path = temp_path("private-snapshot.json");
         let raw = RawSnapshot {
             version: 2,
-            users: Default::default(),
-            groups: Default::default(),
             ..Default::default()
         };
 
-        save_cache(&path, &raw.into()).unwrap();
+        save_cache(&path, &raw).unwrap();
 
         let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
@@ -728,8 +682,6 @@ mod tests {
         let path = temp_path("oversized-save-snapshot.json");
         let mut raw = RawSnapshot {
             version: 3,
-            users: Default::default(),
-            groups: Default::default(),
             ..Default::default()
         };
         raw.users.insert(
@@ -740,12 +692,12 @@ mod tests {
                 up_rate: 0,
                 down_rate: 0,
                 max_connections: 0,
-                group: "open".to_string(),
+                policy: "open".to_string(),
                 frontends: Default::default(),
             },
         );
 
-        let err = save_cache(&path, &raw.into()).unwrap_err();
+        let err = save_cache(&path, &raw).unwrap_err();
 
         assert!(err
             .to_string()
@@ -759,6 +711,7 @@ mod tests {
         std::fs::write(
             &path,
             br#"{
+                "schema_version": 1,
                 "version": 4,
                 "users": {
                     "alice": {
@@ -767,10 +720,9 @@ mod tests {
                         "up_rate": 0,
                         "down_rate": 0,
                         "max_connections": 0,
-                        "group": "missing"
+                        "policy": "missing"
                     }
-                },
-                "groups": {}
+                }
             }"#,
         )
         .unwrap();
@@ -797,7 +749,7 @@ mod tests {
     #[tokio::test]
     async fn sync_once_applies_remote_snapshot_and_saves_cache() {
         let cache_path = temp_path("remote-cache.json");
-        let body = br#"{"version":9,"users":{},"groups":{}}"#.to_vec();
+        let body = br#"{"schema_version":1,"version":9,"users":{},"routing_policies":{}}"#.to_vec();
         let (snapshot_url, task) =
             start_snapshot_server(200, Some(body), Some("Bearer token")).await;
         let engine = Engine::new();
@@ -827,14 +779,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sync_once_applies_v2_chain_snapshot_over_http_and_decides_via_chain() {
+    async fn sync_once_applies_a_chain_egress_over_http_and_decides_via_chain() {
         let cache_path = temp_path("remote-chain-cache.json");
         let body = br#"{
-            "schema_version": 2,
+            "schema_version": 1,
             "version": 13,
-            "users": {"alice": {"password": "pw", "group": "rule-a"}},
-            "groups": {"rule-a": {"upstream": {"kind": "chain", "addr": "jp-pop"}, "proxy": ["example.com"]}},
-            "chains": {"jp-pop": {"members": [
+            "users": {"alice": {"password": "pw", "policy": "rule-a"}},
+            "routing_policies": {"rule-a": {"routes": [
+                {"selectors": ["example.com"], "action": {"type": "egress", "egress": "jp-pop"}}
+            ]}},
+            "egresses": {"jp-pop": {"type": "chain", "members": [
                 {"id": "jp-reverse-1", "priority": 1, "backend": {"kind": "reverse", "addr": "h1"}},
                 {"id": "jp-socks-2", "priority": 2, "backend": {"kind": "socks5", "addr": "10.2.2.1:1080"}}
             ]}}
@@ -857,7 +811,7 @@ mod tests {
         let outcome = syncer.sync_once("test").await;
         assert!(outcome.success && outcome.updated);
         assert_eq!(engine.version(), 13);
-        assert_eq!(engine.schema_version(), 2);
+        assert_eq!(engine.schema_version(), crate::model::SCHEMA_VERSION);
         match engine.decide("alice", "example.com") {
             crate::model::Decision::ViaChain(chain) => {
                 assert_eq!(chain.id, "jp-pop");
@@ -867,17 +821,17 @@ mod tests {
         }
         // The cache written from the HTTP body still carries the chain config.
         let cached = std::fs::read_to_string(&cache_path).unwrap();
-        assert!(cached.contains("\"schema_version\":2"));
+        assert!(cached.contains("\"schema_version\":1"));
         assert!(cached.contains("jp-pop"));
         task.await.unwrap();
         let _ = std::fs::remove_file(cache_path);
     }
 
     #[tokio::test]
-    async fn sync_once_applies_v4_snapshot_persists_and_reloads_from_cache() {
-        let cache_path = temp_path("remote-v4-cache.json");
+    async fn sync_once_applies_a_snapshot_persists_and_reloads_from_cache() {
+        let cache_path = temp_path("remote-routing-cache.json");
         let body = br#"{
-            "schema_version": 4,
+            "schema_version": 1,
             "version": 21,
             "egresses": {
                 "e-a": {"type": "upstream", "backend": {"kind": "socks5", "addr": "10.9.9.9:1080"}}
@@ -905,14 +859,14 @@ mod tests {
         )
         .unwrap();
 
-        // Remote apply: the v4 document compiles, applies, and decides.
+        // Remote apply: the document compiles, applies, and decides.
         let outcome = syncer.sync_once("test").await;
         assert!(outcome.success && outcome.updated);
         assert_eq!(engine.version(), 21);
-        assert_eq!(engine.schema_version(), 4);
+        assert_eq!(engine.schema_version(), crate::model::SCHEMA_VERSION);
         match engine.decide("alice", "example.com") {
             crate::model::Decision::Via(up) => assert_eq!(up.addr, "10.9.9.9:1080"),
-            other => panic!("expected v4 egress decision, got {other:?}"),
+            other => panic!("expected an egress decision, got {other:?}"),
         }
         assert!(matches!(
             engine.decide("alice", "blocked.example.com"),
@@ -920,13 +874,13 @@ mod tests {
         ));
         task.await.unwrap();
 
-        // The persisted cache preserves the v4 shape (not downgraded to legacy).
+        // The persisted cache preserves the wire shape byte for byte.
         let cached = std::fs::read_to_string(&cache_path).unwrap();
-        assert!(cached.contains("\"schema_version\":4"));
+        assert!(cached.contains("\"schema_version\":1"));
         assert!(cached.contains("routing_policies"));
         assert!(cached.contains("e-a"));
 
-        // A fresh node restarting from that cache reloads the v4 snapshot and
+        // A fresh node restarting from that cache reloads the snapshot and
         // decides identically — no control plane involved.
         let reload_engine = Engine::new();
         let reload_syncer = Syncer::new(
@@ -943,24 +897,28 @@ mod tests {
         let reload = reload_syncer.load_cache();
         assert!(reload.success && reload.updated);
         assert_eq!(reload_engine.version(), 21);
-        assert_eq!(reload_engine.schema_version(), 4);
+        assert_eq!(reload_engine.schema_version(), crate::model::SCHEMA_VERSION);
         match reload_engine.decide("alice", "example.com") {
             crate::model::Decision::Via(up) => assert_eq!(up.addr, "10.9.9.9:1080"),
-            other => panic!("expected v4 egress decision after reload, got {other:?}"),
+            other => panic!("expected an egress decision after reload, got {other:?}"),
         }
 
         let _ = std::fs::remove_file(cache_path);
     }
 
     #[tokio::test]
-    async fn sync_once_rejects_v4_missing_refs_without_replacing_snapshot_or_cache() {
-        let cache_path = temp_path("invalid-v4-preserves-cache.json");
-        // Seed a valid legacy v1 cache and adopt it as the active snapshot.
-        std::fs::write(&cache_path, br#"{"version":1,"users":{},"groups":{}}"#).unwrap();
-        // A v4 remote whose route references an egress that does not exist:
+    async fn sync_once_rejects_missing_egress_refs_without_replacing_snapshot_or_cache() {
+        let cache_path = temp_path("invalid-refs-preserve-cache.json");
+        // Seed a valid cache and adopt it as the active snapshot.
+        std::fs::write(
+            &cache_path,
+            br#"{"schema_version":1,"version":1,"users":{},"routing_policies":{}}"#,
+        )
+        .unwrap();
+        // A remote whose route references an egress that does not exist:
         // decode succeeds but compile fails closed.
         let body = br#"{
-            "schema_version": 4,
+            "schema_version": 1,
             "version": 2,
             "egresses": {},
             "routing_policies": {
@@ -995,21 +953,21 @@ mod tests {
         assert!(!outcome.success);
         assert!(outcome.message.contains("compile snapshot failed"));
         assert_eq!(engine.version(), 1);
-        assert_eq!(engine.schema_version(), 1);
+        assert_eq!(engine.schema_version(), crate::model::SCHEMA_VERSION);
         let cached = std::fs::read_to_string(&cache_path).unwrap();
         assert!(cached.contains("\"version\":1"));
-        assert!(!cached.contains("routing_policies"));
+        assert!(!cached.contains("ghost"));
         task.await.unwrap();
         let _ = std::fs::remove_file(cache_path);
     }
 
     #[test]
-    fn load_cache_applies_v4_snapshot_directly() {
-        let path = temp_path("v4-direct-cache.json");
+    fn load_cache_applies_a_cached_snapshot_directly() {
+        let path = temp_path("direct-cache.json");
         std::fs::write(
             &path,
             br#"{
-                "schema_version": 4,
+                "schema_version": 1,
                 "version": 8,
                 "egresses": {
                     "e": {"type": "upstream", "backend": {"kind": "http", "addr": "p.example:8443"}}
@@ -1037,7 +995,7 @@ mod tests {
         let outcome = syncer.load_cache();
         assert!(outcome.success && outcome.updated);
         assert_eq!(engine.version(), 8);
-        assert_eq!(engine.schema_version(), 4);
+        assert_eq!(engine.schema_version(), crate::model::SCHEMA_VERSION);
         // Every host falls back to the policy default egress.
         match engine.decide("bob", "anywhere.example.com") {
             crate::model::Decision::Via(up) => assert_eq!(up.addr, "p.example:8443"),
@@ -1050,6 +1008,7 @@ mod tests {
     async fn sync_once_applies_node_specific_override_matching_configured_node_id() {
         let cache_path = temp_path("node-override-cache.json");
         let body = br#"{
+            "schema_version": 1,
             "version": 9,
             "users": {
                 "alice": {
@@ -1058,33 +1017,26 @@ mod tests {
                     "up_rate": 0,
                     "down_rate": 0,
                     "max_connections": 0,
-                    "group": "via-hop"
+                    "policy": "via-hop"
                 }
             },
-            "groups": {
-                "via-hop": {
-                    "upstream": {"kind": "socks5", "addr": "shared.example.com:1080", "tls": false},
-                    "proxy": ["example.com"],
-                    "block": []
-                }
+            "routing_policies": {
+                "via-hop": {"routes": [
+                    {"selectors": ["example.com"], "action": {"type": "egress", "egress": "hop"}}
+                ]}
+            },
+            "egresses": {
+                "hop": {"type": "upstream", "backend": {"kind": "socks5", "addr": "shared.example.com:1080"}}
             },
             "node_overrides": {
                 "node-1": {
-                    "groups": {
-                        "via-hop": {
-                            "upstream": {"kind": "socks5", "addr": "127.0.0.1:1080", "tls": false},
-                            "proxy": ["example.com"],
-                            "block": []
-                        }
+                    "egresses": {
+                        "hop": {"type": "upstream", "backend": {"kind": "socks5", "addr": "127.0.0.1:1080"}}
                     }
                 },
                 "node-2": {
-                    "groups": {
-                        "via-hop": {
-                            "upstream": {"kind": "socks5", "addr": "10.0.0.9:1080", "tls": false},
-                            "proxy": ["example.com"],
-                            "block": []
-                        }
+                    "egresses": {
+                        "hop": {"type": "upstream", "backend": {"kind": "socks5", "addr": "10.0.0.9:1080"}}
                     }
                 }
             }
@@ -1120,8 +1072,13 @@ mod tests {
     #[tokio::test]
     async fn sync_once_rejects_invalid_remote_snapshot_without_overwriting_cache() {
         let cache_path = temp_path("invalid-remote-preserves-cache.json");
-        std::fs::write(&cache_path, br#"{"version":1,"users":{},"groups":{}}"#).unwrap();
+        std::fs::write(
+            &cache_path,
+            br#"{"schema_version":1,"version":1,"users":{},"routing_policies":{}}"#,
+        )
+        .unwrap();
         let body = br#"{
+            "schema_version": 1,
             "version": 2,
             "users": {
                 "alice": {
@@ -1130,10 +1087,9 @@ mod tests {
                     "up_rate": 0,
                     "down_rate": 0,
                     "max_connections": 0,
-                    "group": "missing"
+                    "policy": "missing"
                 }
-            },
-            "groups": {}
+            }
         }"#
         .to_vec();
         let (snapshot_url, task) =
@@ -1192,7 +1148,7 @@ mod tests {
         assert_eq!(engine.version(), 0);
         task.await.unwrap();
 
-        let body = br#"{"version":0,"users":{},"groups":{}}"#.to_vec();
+        let body = br#"{"schema_version":1,"version":0,"users":{},"routing_policies":{}}"#.to_vec();
         let (snapshot_url, task) =
             start_snapshot_server(200, Some(body), Some("Bearer token")).await;
         let syncer = Syncer::new(
@@ -1262,7 +1218,11 @@ mod tests {
         // fallback policy state.
         for status in [401u16, 403] {
             let cache_path = temp_path(&format!("rejected-token-{status}.json"));
-            std::fs::write(&cache_path, br#"{"version":1,"users":{},"groups":{}}"#).unwrap();
+            std::fs::write(
+                &cache_path,
+                br#"{"schema_version":1,"version":1,"users":{},"routing_policies":{}}"#,
+            )
+            .unwrap();
 
             let (snapshot_url, task) =
                 start_snapshot_server_with_since(status, None, None, 1).await;

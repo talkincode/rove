@@ -17,15 +17,19 @@ const USER: &str = "alice";
 const PASS: &str = "secret";
 
 const OPEN_SNAPSHOT: &str = r#"{
+  "schema_version": 1,
   "version": 1,
-  "users": { "alice": { "password": "secret", "group": "default" } },
-  "groups": { "default": { "proxy": [], "block": [] } }
+  "users": { "alice": { "password": "secret", "policy": "default" } },
+  "routing_policies": { "default": { "routes": [] } }
 }"#;
 
 const BLOCK_SNAPSHOT: &str = r#"{
+  "schema_version": 1,
   "version": 2,
-  "users": { "alice": { "password": "secret", "group": "default" } },
-  "groups": { "default": { "proxy": [], "block": ["blocked.example"] } }
+  "users": { "alice": { "password": "secret", "policy": "default" } },
+  "routing_policies": { "default": { "routes": [
+    { "selectors": ["blocked.example"], "action": { "type": "block" } }
+  ] } }
 }"#;
 
 struct ChildGuard {

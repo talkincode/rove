@@ -219,7 +219,8 @@ fn format_uuid(b: &[u8]) -> Option<String> {
 mod tests {
     use super::constant_time_eq;
     use super::Engine;
-    use crate::model::{RawFrontendCred, RawGroup, RawSnapshot, RawUser, Snapshot};
+    use crate::model::test_support::PolicySpec;
+    use crate::model::{RawFrontendCred, RawSnapshot, RawUser, Snapshot};
     use std::collections::HashMap;
 
     #[test]
@@ -251,7 +252,7 @@ mod tests {
                 up_rate: 100,
                 down_rate: 200,
                 max_connections: 5,
-                group: "g".to_string(),
+                policy: "g".to_string(),
                 frontends: HashMap::from([(
                     "tuic".to_string(),
                     RawFrontendCred {
@@ -261,20 +262,18 @@ mod tests {
                 )]),
             },
         );
-        let mut groups = HashMap::new();
-        groups.insert(
-            "g".to_string(),
-            RawGroup {
-                upstream: None,
-                default_upstream: None,
-                proxy: vec![],
-                block: vec![],
-            },
-        );
+        let (routing_policies, egresses) = PolicySpec {
+            egress: None,
+            default_egress: None,
+            routed: vec![],
+            blocked: vec![],
+        }
+        .into_tables("g");
         let raw = RawSnapshot {
             version: 1,
             users,
-            groups,
+            routing_policies,
+            egresses,
             ..Default::default()
         };
         let snap = Snapshot::compile(raw, "node-test").expect("compile");

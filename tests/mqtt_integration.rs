@@ -308,9 +308,10 @@ fn start_rove(broker_port: u16) -> (ChildGuard, u16) {
     std::fs::write(
         &cache_path,
         r#"{
+  "schema_version": 1,
   "version": 7,
-  "users": { "alice": { "password": "secret", "group": "default" } },
-  "groups": { "default": { "proxy": [], "block": [] } }
+  "users": { "alice": { "password": "secret", "policy": "default" } },
+  "routing_policies": { "default": { "routes": [] } }
 }"#,
     )
     .expect("cache");

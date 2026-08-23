@@ -42,12 +42,12 @@ level = "info"
 ## 3. 放一份本地快照缓存 `data/snapshot.json`
 
 节点启动时**先读缓存再联网**，所以哪怕控制面不可达，只要缓存里有用户就能鉴权。下面这份是
-**schema v4**：用户 `alice`（密码 `s3cret`）绑定 `open` routing policy（无 route、无 default
-egress = 纯直连）：
+**当前快照 schema（schema_version: 1）**：用户 `alice`（密码 `s3cret`）绑定 `open` routing policy
+（无 route、无 default egress = 纯直连）：
 
 ```json
 {
-  "schema_version": 4,
+  "schema_version": 1,
   "version": 1,
   "users": {
     "alice": { "password": "s3cret", "policy": "open" }
@@ -66,7 +66,7 @@ mkdir -p data
 ```
 
 > 完整字段（过期、限速、连接数、有序 route、named egress）见
-> [数据模型与策略决策](./data-model.md)。节点仍兼容 schema v1–v3 的 `groups` 快照，但新控制面应输出 v4。
+> [数据模型与策略决策](./data-model.md)。Rove 只接受这一套 `routing_policies` + `egresses` 快照形状。
 
 ## 4. 启动
 

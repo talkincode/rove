@@ -30,7 +30,7 @@ Rove 自带一套纯 Rust 的端到端基准套件，直接压真实的本地 Do
   - `reverse-ingress`：`http:38080`、`https-tls:38443`、`socks5:31080`、`socks5-tls:31081`
   两条路径最终进入同一组 Rove listener；TLS 都在 Rove 终止并正常校验本地 CA。
 - **出口链路**：`direct`（直连）、`https` / `socks5` / `socks5-tls`（三种上游 hop）、
-  `reverse`（QUIC 反向注册 hop）；另有两条[出口链](./data-model.md#出口链chains与主备故障转移)模式：
+  `reverse`（QUIC 反向注册 hop）；另有两条[出口链](./data-model.md#出口链chain与主备故障转移)模式：
   `chain`（主 reverse 成员健康，首选即胜出，测 chain 的簿记开销）与 `chain-failover`
   （主 reverse 成员未注册，每条隧道都在建立期故障转移到 socks5 备份成员，测转移成本）。
 - **分相计时**：每个请求拆成 `connect`（TCP 建连）→ `tls`（入口 TLS 握手）→
@@ -39,7 +39,7 @@ Rove 自带一套纯 Rust 的端到端基准套件，直接压真实的本地 Do
 - **warmup**：每用例先跑 100 个不计入统计的请求，排除冷启动噪声。
 - **开环模式**：支持 `--rate` 按固定 schedule 发起请求，消除 coordinated omission
   （慢响应不会拖住后续请求的发起时刻）；矩阵默认闭环。
-- **策略快照**：`docker/local/snapshot.json` 使用当前 schema v4 的 `routing_policies` + named
+- **策略快照**：`docker/local/snapshot.json` 使用当前 schema 的 `routing_policies` + named
   `egresses`，基准矩阵会经过与生产控制面相同的解码、编译和有序 route 决策链。
 - **目标服务器**内建于负载发生器（宿主机 `:19090`），容器内经 `host.docker.internal` 回连。
 
@@ -164,7 +164,7 @@ Rove 自带一套纯 Rust 的端到端基准套件，直接压真实的本地 Do
 
 ## 出口链（chain）故障转移验收
 
-2026-07-11 对[出口链](./data-model.md#出口链chains与主备故障转移)模式的单独验收
+2026-07-11 对[出口链](./data-model.md#出口链chain与主备故障转移)模式的单独验收
 （同栈同参数：2000 请求 / 并发 20 / warmup 100；本地快照
 `docker/local/snapshot.json` 定义 `bench-pop`——健康 reverse 主 + socks5 备，与
 `bench-pop-failover`——未注册 reverse 主 + socks5 备）。**64000 请求（16 用例 ×

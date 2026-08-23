@@ -17,7 +17,7 @@ use rove::addrbook::{AddrBook, AddrBookService, BookBuilder};
 use rove::config::ControlPlane;
 use rove::engine::Engine;
 use rove::inbound::{http, Ctx};
-use rove::model::{Decision, RawGroup, RawSnapshot, RawUser, Snapshot};
+use rove::model::{Decision, RawSnapshot, RawUser, Snapshot};
 use rove::sync::Syncer;
 use rove::util::read_http_head;
 use std::collections::HashMap;
@@ -27,6 +27,9 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, DuplexStream};
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
+
+mod common;
+use common::PolicySpec;
 
 const USERNAME: &str = "alice";
 const PASSWORD: &str = "secret";
@@ -83,11 +86,11 @@ fn loopback_book() -> Arc<AddrBook> {
     Arc::new(AddrBook::from_bytes(&b.build_bytes().unwrap()).unwrap())
 }
 
-fn snapshot_with_book(group: RawGroup, book: &Arc<AddrBook>) -> Snapshot {
-    Snapshot::compile_with_book(raw_snapshot(group), "node-1", Some(book)).expect("snapshot")
+fn snapshot_with_book(policy: PolicySpec, book: &Arc<AddrBook>) -> Snapshot {
+    Snapshot::compile_with_book(raw_snapshot(policy), "node-1", Some(book)).expect("snapshot")
 }
 
-fn raw_snapshot(group: RawGroup) -> RawSnapshot {
+fn raw_snapshot(policy: PolicySpec) -> RawSnapshot {
     let mut users = HashMap::new();
     users.insert(
         USERNAME.to_string(),
@@ -97,17 +100,16 @@ fn raw_snapshot(group: RawGroup) -> RawSnapshot {
             up_rate: 0,
             down_rate: 0,
             max_connections: 0,
-            group: "default".to_string(),
+            policy: "default".to_string(),
             frontends: Default::default(),
         },
     );
-    let mut groups = HashMap::new();
-    groups.insert("default".to_string(), group);
+    let (routing_policies, egresses) = policy.into_tables("default");
     RawSnapshot {
-        schema_version: 3,
         version: 1,
         users,
-        groups,
+        routing_policies,
+        egresses,
         ..Default::default()
     }
 }
@@ -160,11 +162,11 @@ async fn http_connect_to_book_blocked_category_is_rejected() {
     let book = loopback_book();
     let engine = Engine::new();
     engine.replace(snapshot_with_book(
-        RawGroup {
-            upstream: None,
-            default_upstream: None,
-            proxy: Vec::new(),
-            block: vec!["book:blocked-nets".to_string()],
+        PolicySpec {
+            egress: None,
+            default_egress: None,
+            routed: Vec::new(),
+            blocked: vec!["book:blocked-nets".to_string()],
         },
         &book,
     ));
@@ -187,11 +189,11 @@ async fn http_connect_passes_when_book_category_not_selected() {
     // Only "harmless" (203.0.113.0/24) is selected; loopback must pass and the
     // tunnel must actually move bytes end to end.
     engine.replace(snapshot_with_book(
-        RawGroup {
-            upstream: None,
-            default_upstream: None,
-            proxy: Vec::new(),
-            block: vec!["book:harmless".to_string()],
+        PolicySpec {
+            egress: None,
+            default_egress: None,
+            routed: Vec::new(),
+            blocked: vec!["book:harmless".to_string()],
         },
         &book,
     ));
@@ -218,11 +220,11 @@ async fn http_connect_passes_when_book_category_not_selected() {
 fn book_domain_block_applies_to_requested_host() {
     let book = loopback_book();
     let snap = snapshot_with_book(
-        RawGroup {
-            upstream: None,
-            default_upstream: None,
-            proxy: Vec::new(),
-            block: vec!["book:blocked-nets".to_string()],
+        PolicySpec {
+            egress: None,
+            default_egress: None,
+            routed: Vec::new(),
+            blocked: vec!["book:blocked-nets".to_string()],
         },
         &book,
     );
@@ -243,11 +245,11 @@ fn book_domain_block_applies_to_requested_host() {
 #[test]
 fn snapshot_with_unknown_book_category_is_rejected() {
     let book = loopback_book();
-    let raw = raw_snapshot(RawGroup {
-        upstream: None,
-        default_upstream: None,
-        proxy: Vec::new(),
-        block: vec!["book:does-not-exist".to_string()],
+    let raw = raw_snapshot(PolicySpec {
+        egress: None,
+        default_egress: None,
+        routed: Vec::new(),
+        blocked: vec!["book:does-not-exist".to_string()],
     });
     let err = Snapshot::compile_with_book(raw, "node-1", Some(&book))
         .err()
@@ -257,28 +259,12 @@ fn snapshot_with_unknown_book_category_is_rejected() {
 }
 
 #[test]
-fn book_rules_require_snapshot_schema_v3() {
-    let book = loopback_book();
-    let mut raw = raw_snapshot(RawGroup {
-        upstream: None,
-        default_upstream: None,
-        proxy: Vec::new(),
-        block: vec!["book:blocked-nets".to_string()],
-    });
-    raw.schema_version = 2;
-    let err = Snapshot::compile_with_book(raw, "node-1", Some(&book))
-        .err()
-        .expect("older schema must not reinterpret book: rules");
-    assert!(format!("{err:#}").contains("schema_version 3"), "{err:#}");
-}
-
-#[test]
 fn snapshot_with_book_rules_but_no_book_is_rejected() {
-    let raw = raw_snapshot(RawGroup {
-        upstream: None,
-        default_upstream: None,
-        proxy: vec!["book:google".to_string()],
-        block: Vec::new(),
+    let raw = raw_snapshot(PolicySpec {
+        egress: None,
+        default_egress: None,
+        routed: Vec::new(),
+        blocked: vec!["book:google".to_string()],
     });
     let err = Snapshot::compile(raw, "node-1")
         .err()
@@ -378,11 +364,11 @@ async fn addrbook_swap_recompiles_snapshot_atomically_and_rejects_bad_books() {
     // syncer cache path so it also records last_raw for later recompiles.
     let engine = Engine::new();
     let cache = temp_path("swap-cache.json");
-    let raw = raw_snapshot(RawGroup {
-        upstream: None,
-        default_upstream: None,
-        proxy: Vec::new(),
-        block: vec!["book:streaming".to_string()],
+    let raw = raw_snapshot(PolicySpec {
+        egress: None,
+        default_egress: None,
+        routed: Vec::new(),
+        blocked: vec!["book:streaming".to_string()],
     });
     std::fs::write(&cache, serde_json::to_vec(&raw).unwrap()).unwrap();
     let syncer = test_syncer(engine.clone(), service.clone(), &cache);
@@ -440,11 +426,11 @@ async fn addrbook_swap_recompiles_snapshot_atomically_and_rejects_bad_books() {
 
     // Once policy no longer references the removed category, the unchanged v3
     // candidate can be retried and acknowledged.
-    let compatible = raw_snapshot(RawGroup {
-        upstream: None,
-        default_upstream: None,
-        proxy: Vec::new(),
-        block: Vec::new(),
+    let compatible = raw_snapshot(PolicySpec {
+        egress: None,
+        default_egress: None,
+        routed: Vec::new(),
+        blocked: Vec::new(),
     });
     std::fs::write(&cache, serde_json::to_vec(&compatible).unwrap()).unwrap();
     assert!(syncer.load_cache().success);

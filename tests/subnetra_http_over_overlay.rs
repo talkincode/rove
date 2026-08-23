@@ -17,12 +17,15 @@ use std::sync::Arc;
 
 use base64::Engine as _;
 use rove::engine::Engine;
-use rove::model::{RawGroup, RawSnapshot, RawUser, Snapshot};
+use rove::model::{RawSnapshot, RawUser, Snapshot};
 use rove::subnetra::config::{PeerConfig, SubnetraConfig};
 use rove::subnetra::{netstack, reactor, service};
 use rove::util::read_http_head;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
+
+mod common;
+use common::PolicySpec;
 
 const EPOCH: u64 = 1_704_067_200_000_000_000;
 const USERNAME: &str = "alice";
@@ -39,26 +42,24 @@ fn permissive_engine() -> Arc<Engine> {
             up_rate: 0,
             down_rate: 0,
             max_connections: 0,
-            group: "default".to_string(),
+            policy: "default".to_string(),
             frontends: Default::default(),
         },
     );
-    let mut groups = HashMap::new();
-    groups.insert(
-        "default".to_string(),
-        RawGroup {
-            upstream: None,
-            default_upstream: None,
-            proxy: Vec::new(),
-            block: Vec::new(),
-        },
-    );
+    let (routing_policies, egresses) = PolicySpec {
+        egress: None,
+        default_egress: None,
+        routed: Vec::new(),
+        blocked: Vec::new(),
+    }
+    .into_tables("default");
     let engine = Engine::new();
     let snapshot = Snapshot::compile(
         RawSnapshot {
             version: 1,
             users,
-            groups,
+            routing_policies,
+            egresses,
             ..Default::default()
         },
         "hub-node",

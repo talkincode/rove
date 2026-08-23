@@ -152,17 +152,17 @@ fn spawn_node(layout: SniLayout) -> NodeUnderTest {
     std::fs::write(
         &cache_path,
         r#"{
+  "schema_version": 1,
   "version": 1,
   "users": {
     "alice": {
       "password": "secret",
-      "group": "default"
+      "policy": "default"
     }
   },
-  "groups": {
+  "routing_policies": {
     "default": {
-      "proxy": [],
-      "block": []
+      "routes": []
     }
   }
 }"#,

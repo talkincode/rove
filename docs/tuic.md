@@ -53,25 +53,30 @@ timeout_ms = 500
 - `[tuic_listeners.sniff]` 只处理 TCP `Connect` 的首包并提取 TLS SNI / HTTP Host，不处理 UDP
   `Packet`。`observe` 只记录；`route` 在拨号前让识别域名参与策略，但绝不改写 requested 目标。
 - `route` 中 requested/sniffed 任一命中 block 都拒绝；只有 requested 是 IP 时，sniffed 域名才能命中
-  proxy 规则选择出口。识别失败或超时回退 requested 决策，已读取字节原样回放。
+  egress route 选择出口。识别失败或超时回退 requested 决策，已读取字节原样回放。
 
 要让某个用户能用 TUIC，控制面需要在快照里给该用户配 `frontends.tuic`（uuid + password）：
 
 ```jsonc
 {
-  "schema_version": 4,
+  "schema_version": 1,
+  "version": 42,
   "users": {
     "alice": {
-      "password": "login-only-secret",         // 登录密码（HTTP/SOCKS5）
+      "password": "login-only-secret",   // 登录密码（HTTP/SOCKS5）
       "policy": "media",
-      "frontends": {                            // 按协议命名空间的前端凭据
+      "frontends": {                     // 按协议命名空间的前端凭据
         "tuic": {
           "uuid": "550e8400-e29b-41d4-a716-446655440000",
-          "password": "front-end-only-secret"   // 独立于 password
+          "password": "front-end-only-secret"  // 独立于 password
         }
       }
     }
-  }
+  },
+  "routing_policies": {
+    "media": { "routes": [] }
+  },
+  "egresses": {}
 }
 ```
 
@@ -81,9 +86,13 @@ timeout_ms = 500
 
 TUIC 的 UDP 只经 **reverse/2 UDP 出口**（唯一可行的非 Direct UDP 出口）。要让某用户的 UDP 打到目标服务器，其 routing policy 必须把目标路由到一个 `reverse` named egress（`backend.kind = "reverse"`，`addr = hop_id`）：
 
-```jsonc
+```json
 {
-  "schema_version": 4,
+  "schema_version": 1,
+  "version": 43,
+  "users": {
+    "alice": { "password": "login-only-secret", "policy": "media" }
+  },
   "routing_policies": {
     "media": {
       "routes": [],
@@ -102,7 +111,7 @@ TUIC 的 UDP 只经 **reverse/2 UDP 出口**（唯一可行的非 Direct UDP 出
 - 命中 `block` action 的目标：**逐包丢弃**，绝不出 hop。
 - 决策落到 Direct / HTTP 上游 / SOCKS5 上游的 UDP 包：**fail-closed 丢弃**（HTTP CONNECT 物理上载不了 UDP；Direct/SOCKS5-UDP 出口不在当前范围）。
 - 目标 hop 未声明 UDP 能力（旧版 hop）：association 直接被拒（`udp_unsupported`）。
-- 决策落到[出口链（chain）](./data-model.md#出口链chains与主备故障转移)时：只在 chain 的
+- 决策落到[出口链（chain）](./data-model.md#出口链chain与主备故障转移)时：只在 chain 的
   **reverse 成员**中按优先级尝试；chain 只有 HTTP/SOCKS5 成员时同样 fail-closed 丢弃。
   association 建立后粘住选中的 hop，不逐包切换。UDP 主备需要 chain 里至少两个 reverse 成员。
 
@@ -124,4 +133,4 @@ TUIC 的 UDP 只经 **reverse/2 UDP 出口**（唯一可行的非 Direct UDP 出
 
 见 [客户端接入 · TUIC](./client-setup.md#tuic-客户端)。要点：客户端的 `uuid`/`password`/`alpn` 必须与快照凭据和监听 `alpn` 对齐；自签名证书需在客户端开启「允许不安全 / skip-cert-verify」或导入 CA。
 
-[`outbound`]: ./data-model.md#二级代理upstream
+[`outbound`]: ./data-model.md#出口-backend

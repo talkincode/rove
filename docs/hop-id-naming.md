@@ -3,7 +3,7 @@
 `hop_id` 是 edge 识别出口的**稳定主键**。它出现在：
 
 - hop 启动参数 `--reverse-hop-id`
-- 控制面快照 named egress：`egresses.*.backend.addr`（`kind = "reverse"`；v1–v3 兼容字段则是 `upstream.addr`）
+- 控制面快照 named egress：`egresses.*.backend.addr`（`kind = "reverse"`）
 - 访问日志决策名 `reverse:<hop_id>`
 - 指标 / 排障维度
 
@@ -61,17 +61,13 @@ rove-hop-<region>[-<site>][-<seq>]
 
 ## 与快照的对应关系
 
-edge 快照（schema v4 概念示例）：
+edge 快照（当前 schema 概念示例）：
 
 ```json
 {
-  "schema_version": 4,
-  "egresses": {
-    "jp": {
-      "type": "upstream",
-      "backend": { "kind": "reverse", "addr": "rove-hop-jp" }
-    }
-  },
+  "schema_version": 1,
+  "version": 42,
+  "users": { "alice": { "password": "example", "policy": "jp-policy" } },
   "routing_policies": {
     "jp-policy": {
       "routes": [
@@ -80,6 +76,12 @@ edge 快照（schema v4 概念示例）：
           "action": { "type": "egress", "egress": "jp" }
         }
       ]
+    }
+  },
+  "egresses": {
+    "jp": {
+      "type": "upstream",
+      "backend": { "kind": "reverse", "addr": "rove-hop-jp" }
     }
   }
 }
