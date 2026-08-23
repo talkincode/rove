@@ -14,7 +14,8 @@ pub struct TrafficIdentity {
     pub requested_host: String,
     pub requested_port: u16,
     pub sniff: Option<crate::sniff::SniffObservation>,
-    pub effective_policy_host: String,
+    /// Why this connection got its outcome. See [`PolicyAttribution`].
+    pub policy: crate::model::PolicyAttribution,
     pub dial_host: String,
     pub dial_port: u16,
 }
@@ -26,7 +27,7 @@ impl TrafficIdentity {
             requested_host: host.clone(),
             requested_port: port,
             sniff: None,
-            effective_policy_host: host.clone(),
+            policy: crate::model::PolicyAttribution::for_host(host.clone()),
             dial_host: host,
             dial_port: port,
         }
@@ -37,8 +38,8 @@ impl TrafficIdentity {
         self
     }
 
-    pub fn with_effective_policy_host(mut self, host: impl Into<String>) -> Self {
-        self.effective_policy_host = host.into();
+    pub fn with_policy(mut self, policy: crate::model::PolicyAttribution) -> Self {
+        self.policy = policy;
         self
     }
 }
@@ -123,6 +124,12 @@ pub struct ProbeTraceReport {
     pub sniff_outcome: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub effective_policy_host: Option<String>,
+    /// Policy that owned the decision; absent when routing was never reached.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub policy_id: Option<String>,
+    /// Index of the matching route; absent when `default_action` decided.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub matched_route: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub decision: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -180,7 +187,10 @@ impl ProbeTracer {
         let sniff_protocol =
             sniff.and_then(|observation| observation.protocol.map(|value| value.as_str()));
         let sniff_outcome = sniff.map(|observation| observation.outcome.as_str());
-        let effective_policy_host = traffic.map(|identity| identity.effective_policy_host.clone());
+        let effective_policy_host =
+            traffic.map(|identity| identity.policy.effective_policy_host.clone());
+        let policy_id = traffic.and_then(|identity| identity.policy.policy_id.clone());
+        let matched_route = traffic.and_then(|identity| identity.policy.matched_route);
         let report = ProbeTraceReport {
             request_id: arm.request_id,
             reply_topic: arm.reply_topic,
@@ -198,6 +208,8 @@ impl ProbeTracer {
             sniff_protocol,
             sniff_outcome,
             effective_policy_host,
+            policy_id,
+            matched_route,
             decision: candidate.decision,
             egress: candidate.egress,
             chain_member: candidate.chain_member,

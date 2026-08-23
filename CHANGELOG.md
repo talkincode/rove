@@ -4,6 +4,12 @@
 
 ### Added
 
+- 访问日志与 probe trace 新增 `policy_id` 与 `matched_route`：记录**是哪条规则**做出的决策，
+  而不只是决策结果。`matched_route` 是命中 route 在该 policy `routes` 数组中的下标；缺省表示
+  没有 route 命中、由 `default_action` 决定。`policy_id` 缺省的语义是「压根没查到策略」——
+  未知用户，或用户指向了快照未定义的 policy——与「策略主动拒绝」区分开：后者是正常执行，
+  前者是快照下发与用户管理脱节的信号。此前一条 `"decision":"block"` 无法回溯到规则，而产生
+  它的快照可能早已被替换。
 - routing policy 新增 `default_action`：所有 route 都未命中时执行的 action，语法与
   `routes[].action` 完全一致（`egress` / `direct` / `block`）。把它设为
   `{"type":"block"}` 即可写出 deny-by-default（allowlist）策略——policy 只能到达它自己

@@ -192,6 +192,9 @@ pub async fn serve<S: IoStream>(
 
     let resolved = ctx.engine.decide_with_sniff(&user, &host, None);
     let decision_name = decision_name(&resolved.decision);
+    // Snapshot the routing attribution before the decision is consumed by the
+    // dial: every exit path below still has to say which rule decided.
+    let attribution = resolved.attribution();
     if let Decision::Block = resolved.decision {
         debug!(user = %user, target = %host, "blocked by policy");
         reply(&mut stream, 0x02).await?; // connection not allowed by ruleset
@@ -204,7 +207,7 @@ pub async fn serve<S: IoStream>(
                 target_host: Some(host),
                 target_port: Some(port),
                 decision: Some(decision_name),
-                effective_policy_host: Some(resolved.effective_policy_host),
+                policy: Some(attribution.clone()),
                 failure_stage: Some("policy"),
                 message: Some("blocked by policy"),
                 ..TraceFields::default()
@@ -331,7 +334,7 @@ pub async fn serve<S: IoStream>(
             attempts: egress.chain_id.is_some().then_some(egress.attempts),
             result,
             sniff: sniff_observation,
-            effective_policy_host: Some(resolved.effective_policy_host),
+            policy: Some(attribution.clone()),
             failure_stage: stage,
             message,
             bytes_up,
@@ -358,6 +361,9 @@ async fn tunnel_connect_route<S: IoStream>(
     mut resolved: crate::model::ResolvedDecision,
     mut decision_name: String,
 ) -> anyhow::Result<()> {
+    // Snapshot the routing attribution before the decision is consumed by the
+    // dial: every exit path below still has to say which rule decided.
+    let mut attribution = resolved.attribution();
     reply(&mut stream, 0x00).await?;
     let captured = match capture_prefix(&mut stream, ctx.sniff.max_bytes, ctx.sniff.timeout()).await
     {
@@ -372,7 +378,7 @@ async fn tunnel_connect_route<S: IoStream>(
                     target_host: Some(host),
                     target_port: Some(port),
                     decision: Some(decision_name),
-                    effective_policy_host: Some(resolved.effective_policy_host),
+                    policy: Some(attribution.clone()),
                     failure_stage: Some("sniff_read"),
                     message: Some("route sniff read failed"),
                     ..TraceFields::default()
@@ -386,6 +392,7 @@ async fn tunnel_connect_route<S: IoStream>(
         .engine
         .decide_with_sniff(&user, &host, captured.observation.host.as_deref());
     decision_name = crate::outbound::decision_label(&resolved.decision);
+    attribution = resolved.attribution();
     let sniff_observation = Some(captured.observation);
     if let Decision::Block = resolved.decision {
         debug!(
@@ -404,7 +411,7 @@ async fn tunnel_connect_route<S: IoStream>(
                 target_port: Some(port),
                 decision: Some(decision_name),
                 sniff: sniff_observation,
-                effective_policy_host: Some(resolved.effective_policy_host),
+                policy: Some(attribution.clone()),
                 failure_stage: Some("policy"),
                 message: Some("blocked by requested or sniffed target policy"),
                 ..TraceFields::default()
@@ -429,7 +436,7 @@ async fn tunnel_connect_route<S: IoStream>(
                         target_port: Some(port),
                         decision: Some(decision_name),
                         sniff: sniff_observation,
-                        effective_policy_host: Some(resolved.effective_policy_host),
+                        policy: Some(attribution.clone()),
                         attempts: e.chain_attempts(),
                         failure_stage: Some(e.failure_stage()),
                         message: Some("upstream connect failed"),
@@ -481,7 +488,7 @@ async fn tunnel_connect_route<S: IoStream>(
             attempts: egress.chain_id.is_some().then_some(egress.attempts),
             result,
             sniff: sniff_observation,
-            effective_policy_host: Some(resolved.effective_policy_host),
+            policy: Some(attribution.clone()),
             failure_stage: stage,
             message,
             bytes_up,
@@ -514,7 +521,8 @@ struct TraceFields<'a> {
     chain_member: Option<String>,
     attempts: Option<u32>,
     sniff: Option<SniffObservation>,
-    effective_policy_host: Option<String>,
+    /// Routing attribution; `None` when the connection failed before routing.
+    policy: Option<crate::model::PolicyAttribution>,
     result: TraceResult,
     failure_stage: Option<&'a str>,
     message: Option<&'a str>,
@@ -533,7 +541,7 @@ impl Default for TraceFields<'_> {
             chain_member: None,
             attempts: None,
             sniff: None,
-            effective_policy_host: None,
+            policy: None,
             result: TraceResult::Error,
             failure_stage: None,
             message: None,
@@ -568,8 +576,8 @@ async fn report_trace(ctx: &Arc<Ctx>, started: Instant, peer: SocketAddr, fields
         .zip(fields.target_port)
         .map(|(host, port)| {
             let mut identity = TrafficIdentity::new(host.clone(), port);
-            if let Some(host) = fields.effective_policy_host.clone() {
-                identity = identity.with_effective_policy_host(host);
+            if let Some(policy) = fields.policy.clone() {
+                identity = identity.with_policy(policy);
             }
             match fields.sniff.clone() {
                 Some(observation) => identity.with_observation(observation),

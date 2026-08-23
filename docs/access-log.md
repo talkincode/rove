@@ -35,6 +35,8 @@ jq 'select(.kind=="stats")'      logs/access.2026-07-01   # 每 60 秒心跳
 | `sniffed_host` / `sniff_protocol` | observe-only 从首包识别出的域名及 `tls` / `http` 来源；未匹配时省略 |
 | `sniff_outcome` | `matched` / `unsupported` / `timeout` / `malformed` / `limit_exceeded` / `incomplete` |
 | `effective_policy_host` | 当前策略候选 host；observe-only 阶段与 requested host 相同 |
+| `policy_id` | 做出该决策的 routing policy id。**省略**表示压根没有查到策略——未知用户，或用户指向了快照未定义的 policy；这与「策略主动拒绝」是两类事件 |
+| `matched_route` | 命中路由在该 policy `routes` 数组中的下标（从 0 开始）。**省略**表示没有任何 route 命中，由 `default_action` 决定 |
 | `decision` | `direct` / `block` / `upstream:<addr>` / `reverse:<hop_id>` / `chain:<chain_id>`（携带具体上游地址或逻辑出口链，不只是类别；**不含**上游密码） |
 | `egress` | 仅 chain 决策：胜出成员的物理出口标识（如 `reverse:h1` / `upstream:10.2.2.1:1080`） |
 | `chain_member` | 仅 chain 决策：胜出成员的稳定 ID |
@@ -112,4 +114,17 @@ jq -r 'select(.kind=="connection" and .result!="success") | .target_host' logs/a
 
 # 各 listener 最新吞吐（心跳）
 jq 'select(.kind=="stats")' logs/access.$(date +%F) | tail -n 20
+
+# 某条 route 到底拦了什么：按 policy + route 下标反查
+jq 'select(.policy_id=="llm-egress" and .matched_route==0)' logs/access.*
+
+# 哪些拒绝不是策略拒绝的：policy_id 缺失 = 压根没查到策略
+# （未知用户，或用户指向了快照未定义的 policy）——这类应当为 0，否则说明
+# 快照下发与用户管理脱节了
+jq 'select(.kind=="connection" and .decision=="block" and (has("policy_id")|not))' logs/access.*
+
+# 有多少流量是靠 default_action 兜底走的，而不是被显式 route 命中的：
+# 这个比例偏高说明策略写得太粗，出口选择实际上没有被治理
+jq -r 'select(.kind=="connection") | if has("matched_route") then "routed" else "default" end' \
+  logs/access.* | sort | uniq -c
 ```

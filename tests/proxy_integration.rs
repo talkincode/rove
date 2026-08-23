@@ -234,6 +234,98 @@ async fn access_log_file_records_bytes_for_successful_http_tunnel() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// An access-log line that says `"block"` without naming the rule is not an
+/// audit record: it cannot be reviewed, and the snapshot that produced it may
+/// already have been replaced by the time anyone reads the line.
+#[tokio::test]
+async fn access_log_names_the_policy_and_route_behind_each_decision() {
+    let (target_addr, echo_task) = start_echo_server().await;
+    let engine = engine_with_policy(PolicySpec {
+        blocked: vec!["blocked.example.com".to_string()],
+        ..PolicySpec::default()
+    });
+
+    let dir = temp_access_log_dir("attribution");
+    let cfg = rove::config::AccessLogConfig {
+        dir: dir.to_string_lossy().into_owned(),
+        channel_capacity: 64,
+        ..rove::config::AccessLogConfig::default()
+    };
+    let access_log = rove::access_log::AccessLogger::spawn(
+        &cfg,
+        "it-node".to_string(),
+        rove::stats::TrafficStats::new(),
+    )
+    .unwrap();
+
+    let token = base64::engine::general_purpose::STANDARD.encode(format!("{USERNAME}:{PASSWORD}"));
+
+    // A named route decided: the line must carry its index.
+    let (mut client, proxy_task) =
+        spawn_http_proxy_with_access_log(engine.clone(), access_log.clone());
+    client
+        .write_all(
+            format!(
+                "CONNECT blocked.example.com:443 HTTP/1.1\r\nHost: blocked.example.com:443\r\nProxy-Authorization: Basic {token}\r\n\r\n"
+            )
+            .as_bytes(),
+        )
+        .await
+        .unwrap();
+    let head = read_http_head(&mut client, 8192).await.unwrap();
+    assert!(
+        String::from_utf8_lossy(&head).starts_with("HTTP/1.1 403"),
+        "response was {}",
+        String::from_utf8_lossy(&head)
+    );
+    let _ = client.shutdown().await;
+    assert_task_ok(proxy_task).await;
+
+    let line = read_access_log_line_with_retry(&dir, "blocked.example.com").await;
+    let blocked: serde_json::Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(blocked["decision"], "block");
+    assert_eq!(blocked["policy_id"], "default");
+    assert_eq!(
+        blocked["matched_route"], 0,
+        "the blocking route is the policy's first route: {line}"
+    );
+
+    // The default action decided: a policy is named, but no route is, so the
+    // absent index is what distinguishes "a rule matched" from "nothing did".
+    let (mut client, proxy_task) = spawn_http_proxy_with_access_log(engine, access_log);
+    client
+        .write_all(
+            format!(
+                "CONNECT {target_addr} HTTP/1.1\r\nHost: {target_addr}\r\nProxy-Authorization: Basic {token}\r\n\r\n"
+            )
+            .as_bytes(),
+        )
+        .await
+        .unwrap();
+    let head = read_http_head(&mut client, 8192).await.unwrap();
+    assert!(
+        String::from_utf8_lossy(&head).starts_with("HTTP/1.1 200"),
+        "response was {}",
+        String::from_utf8_lossy(&head)
+    );
+    client.write_all(b"ping").await.unwrap();
+    let mut echoed = [0u8; 4];
+    client.read_exact(&mut echoed).await.unwrap();
+    client.shutdown().await.unwrap();
+    assert_task_ok(proxy_task).await;
+    echo_task.await.unwrap();
+
+    let line = read_access_log_line_with_retry(&dir, "\"result\":\"ok\"").await;
+    let defaulted: serde_json::Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(defaulted["policy_id"], "default");
+    assert!(
+        defaulted.get("matched_route").is_none(),
+        "no route matched, so no index may be reported: {line}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[tokio::test]
 async fn socks5_connect_direct_tunnels_bytes() {
     let (target_addr, echo_task) = start_echo_server().await;
