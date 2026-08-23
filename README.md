@@ -220,8 +220,11 @@ curl -x http://alice:s3cret@127.0.0.1:8080 https://api.github.com/zen
 # 2. 不带凭据必须被拒（407）——Rove 任何时候都不是开放代理
 curl -sS -o /dev/null -w '%{http_code}\n' -x http://127.0.0.1:8080 https://api.github.com/zen
 
-# 3. 每条连接都留下「谁、去哪、命中哪个决策、从哪个出口出去」
-tail -n1 ./logs/access.$(date +%F) | jq '{username, target_host, decision, egress, result}'
+# 3. 每条连接都留下「谁、去哪、哪条规则判的、从哪个出口出去」
+#    policy_id + matched_route 把结果钉回具体规则；matched_route 缺省表示
+#    没有 route 命中、由 policy 的 default_action 兜底
+tail -n1 ./logs/access.$(date +%F) \
+  | jq '{username, target_host, policy_id, matched_route, decision, egress, result}'
 ```
 
 容器部署时才把监听地址放宽到 `0.0.0.0:8080`（示例配置默认绑 `127.0.0.1`，数据面对外可达
