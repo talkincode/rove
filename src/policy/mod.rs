@@ -268,8 +268,8 @@ mod tests {
 
     #[test]
     fn explicit_rules_still_work_without_book() {
-        let rs = RuleSet::from_rules(&strings(&["discord.dev", "10.0.0.0/8"]), None).unwrap();
-        assert!(rs.matches("cdn.discord.dev"));
+        let rs = RuleSet::from_rules(&strings(&["api.openai.com", "10.0.0.0/8"]), None).unwrap();
+        assert!(rs.matches("cdn.api.openai.com"));
         assert!(rs.matches("10.1.2.3"));
         assert!(!rs.matches("example.com"));
         assert!(!rs.is_empty());

@@ -57,7 +57,7 @@ client ──► rove ┤
        "walled": {
          "routes": [
            {
-             "selectors": ["discord.dev", "openai.com", "203.0.113.0/24"],
+             "selectors": ["api.openai.com", "openai.com", "203.0.113.0/24"],
              "action": { "type": "egress", "egress": "hop-a" }
            }
          ]
