@@ -1446,7 +1446,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "rove"
+name = "rove-proxy"
 version = "0.1.0"
 dependencies = [
  "aes",

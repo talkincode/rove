@@ -103,7 +103,7 @@ jobs:
           fi
           package_version="$(
             cargo metadata --locked --no-deps --format-version 1 |
-              python3 -c 'import json, sys; packages = [p for p in json.load(sys.stdin)["packages"] if p["name"] == "rove"]; assert len(packages) == 1, f"expected one rove package, found {len(packages)}"; print(packages[0]["version"])'
+              python3 -c 'import json, sys; packages = [p for p in json.load(sys.stdin)["packages"] if p["name"] == "rove-proxy"]; assert len(packages) == 1, f"expected one rove-proxy package, found {len(packages)}"; print(packages[0]["version"])'
           )"
           if [[ "${RELEASE_TAG}" != "v${package_version}" ]]; then
             echo "release tag ${RELEASE_TAG} does not match Cargo package version ${package_version}" >&2

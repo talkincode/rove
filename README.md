@@ -169,8 +169,8 @@ brew install talkincode/tap/rove
 git clone https://github.com/talkincode/rove.git && cd rove
 cargo build --release --bins
 
-# crates.io（二进制名仍是 rove）
-cargo install rove --locked
+# crates.io（包名 rove-proxy，二进制仍是 rove）
+cargo install rove-proxy --locked
 ```
 
 也可从 [Releases](https://github.com/talkincode/rove/releases) 下载对应平台的压缩包。

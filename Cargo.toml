@@ -1,5 +1,5 @@
 [package]
-name = "rove"
+name = "rove-proxy"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.88"
@@ -12,6 +12,10 @@ readme = "README.md"
 authors = ["talkincode"]
 keywords = ["proxy", "socks5", "network", "edge"]
 categories = ["network-programming", "command-line-utilities"]
+
+[lib]
+name = "rove"
+path = "src/lib.rs"
 
 [[bin]]
 name = "rove"

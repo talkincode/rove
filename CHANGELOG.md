@@ -8,4 +8,4 @@
 - 单二进制正向代理：HTTP CONNECT / absolute-form、SOCKS5（含 UDP）、TUIC v5，进程内认证、策略、限速。
 - 伴生进程 `rove-hop`、`rove-relay`、`rove-abctl`。
 - 控制面 HTTP 快照同步、本地缓存热启动、fail-closed 安全失败模式。
-- Homebrew tap `talkincode/tap/rove` 与 crates.io 发布通道。
+- Homebrew tap `talkincode/tap/rove`；crates.io 包名 `rove-proxy`（二进制仍为 `rove`）。
