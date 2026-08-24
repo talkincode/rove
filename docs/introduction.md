@@ -32,13 +32,14 @@ HTTP 定期拉取一份「编译好的快照」，在内存里热替换，控制
 | **transport** | 出口怎么实现：直连、HTTP / SOCKS5 上游、反向 hop、Subnetra overlay。 |
 | **observability** | 每条连接留下「谁、去哪、哪条规则判的、从哪个出口出去」。 |
 
-HTTP CONNECT、SOCKS5、TUIC 都是 **listener adapter**，不是产品本身。新的接入方式必须能证明自己服务的是应用入口，并且有 fail-closed 的认证路径，才能加到这条主干上。
+HTTP CONNECT、SOCKS5、TUIC 与 T1 SNI 网关都是 **listener adapter**，不是产品本身。新的接入方式必须能证明自己服务的是应用入口，并且有 fail-closed 的身份路径，才能加到这条主干上。
 
 ---
 
 ## 它能做什么
 
 - **怎么接都行**：HTTP(S) CONNECT、明文 HTTP absolute-form、SOCKS5（含 UDP）；监听上叠一层 TLS 就是 `https` / `socks5tls`；还有 TUIC v5（QUIC）前端。
+- **应用改不了代理也能受控出站**：T1 SNI 透明网关将服务端精确允许的 DNS 名转入同一条身份、策略、出口、限速和审计链路，不终止 TLS、不接受任意目标。
 - **想从哪儿出去都行**：本地直连、HTTP / SOCKS5 上游；hop 藏在 NAT 后也没关系——它主动用 QUIC 反向连上来注册。
 - **入口藏在 NAT 后也能接公网**：`rove-relay` 提供经过授权的动态 TCP/UDP 端口；用户 TLS 私钥仍留在 Rove。
 - **能打进隔离网段**：内嵌 Subnetra 加密 Layer-3 组网，不用 TUN、不要 `NET_ADMIN`、不用另起进程。
@@ -53,7 +54,7 @@ HTTP CONNECT、SOCKS5、TUIC 都是 **listener adapter**，不是产品本身。
 - 不是控制面，也不是管理后台。节点只**消费**快照，不管理用户、套餐、计费。
 - 不是公共出口、不是跨境接入服务、不是机场。软件和网络运营是两回事，所有线路由部署者自行准备。
 - 不是通用反向代理或 API 网关。origin 必须由服务端声明，不能由客户端的 Host / URL 指定。
-  规划中的 SNI / L7 出口网关见 [应用出口网关](./egress-gateway.md)；发布内网服务请用
+  已交付的 T1 SNI 出口网关与规划中的 L7 T2 见 [应用出口网关](./egress-gateway.md)；发布内网服务请用
   [reverse ingress](./reverse-ingress.md) 或 [Subnetra](./subnetra.md)。
 - 不会「失败即放行」。认证失败、账号过期、策略拒绝、快照无效时，一律保守拒绝。
 
@@ -63,7 +64,7 @@ HTTP CONNECT、SOCKS5、TUIC 都是 **listener adapter**，不是产品本身。
 
 ```text
    应用客户端 ──►  listener adapter          ──►  identity → policy → route → egress  ──►  transport  ──► 目标
-   HTTP / SOCKS5 / TUIC     （可叠 TLS / QUIC）              ▲
+   HTTP / SOCKS5 / TUIC / SNI     （可叠 TLS / QUIC；SNI 原样透传）              ▲
                                                             │  热替换快照 (ArcSwap)
                                                   控制面 HTTP 拉取 + 本地缓存
 ```
@@ -81,8 +82,9 @@ Rove 是通用的应用网络基础设施，用于出口治理、路径优化与
 - **软件与网络运营是两回事。** 本项目只发布软件，不运营网络：不提供官方公共出口节点，
   不提供任何形式的公共跨境网络接入服务，没有订阅、节点分发或流量套餐。所有出口线路
   都由部署者自行准备并自行负责。
-- **默认强制认证，不存在开放代理形态。** 所有接入方式一律要求凭据；认证失败、账号过期、
-  策略命中阻断、快照编译失败或上游不可达时一律拒绝连接，不会降级为直连或匿名放行。
+- **不存在开放代理形态。** HTTP/SOCKS5/TUIC 使用客户端凭据；T1 SNI listener 则必须绑定当前快照中
+  有效的服务端身份和闭合 origin 白名单。身份无效、策略命中阻断、快照编译失败或上游不可达时一律拒绝连接，
+  不会降级为直连或匿名放行。
 - **部署者是合规责任主体。** 使用 Rove 组建的任何网络路径，都需遵守部署地与流量落地地的
   法律法规，以及你与网络运营商、云厂商、上游服务商之间的协议。
 - **不面向消费级代理市场。** 项目不提供机场面板、订阅链接、流量计费、客户端一键配置这类
@@ -98,7 +100,7 @@ Rove 是通用的应用网络基础设施，用于出口治理、路径优化与
 | 用二进制 / Docker / 源码部署到生产 | [安装与部署](./installation.md) |
 | 弄清每个配置项什么意思 | [配置详解](./configuration.md) |
 | 客户端接入参数 | [客户端接入](./client-setup.md) |
-| 应用改不了代理，只能改 DNS 或 base_url | [应用出口网关（规划中）](./egress-gateway.md) |
+| 应用改不了代理，只能改 DNS 或 base_url | [应用出口网关（T1 SNI 已交付；T2 规划中）](./egress-gateway.md) |
 | 理解用户、routing policy、named egress 怎么算 | [数据模型与策略决策](./data-model.md) |
 | 构建、发布并接入大型域名/IP 地址簿 | [rove-addrbook 指南](./addrbook-format.md) |
 | 对接我自己的控制面 | [控制面同步协议](./snapshot-protocol.md) |

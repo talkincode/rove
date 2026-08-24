@@ -1,212 +1,160 @@
 # 应用出口网关
 
-> **状态：方向已定，代码未落地。** 本章写的是产品边界和接入形状，不是一份可以照抄上线的配置手册。
-> 现有可运行入口仍是 HTTP CONNECT / SOCKS5 / TUIC，见 [客户端接入](./client-setup.md)。
+> **状态：T1 SNI 透明网关已交付；T2 声明式 HTTPS 网关仍在规划；T3 明确不做。**
+> T1 的实际配置见[配置详解](./configuration.md)，已有代理客户端仍应使用
+> HTTP CONNECT、SOCKS5 或 TUIC，见[客户端接入](./client-setup.md)。
 
-应用访问一个**你自己拥有的普通 HTTPS 端点**，由 Rove 在服务端完成身份、策略、出口选择和审计。
-客户端不必设置 `HTTP_PROXY`、不必改 SDK transport。这是企业 egress 治理的标准形态，也是
-把 Rove 从「让应用配代理」翻成「应用出口平面」的关键一步。
-
-产品名是**应用出口网关**。配置和代码用 `sni` / `gateway` listener，日志用
-`ingress_mode`。**不要叫它 reverse proxy。**
+应用出口网关让不能设置 `HTTP_PROXY` 或 SOCKS 的应用，也能复用 Rove 的身份、策略、出口选择、限速和审计。
+它是新的 **listener adapter**，不是 reverse proxy，更不是把客户端给出的 Host 或 URL 变成任意拨号目标。
 
 ---
 
 ## 先把三个容易混的词分开
 
-仓库里已经有两个「reverse」，和新能力不是一回事：
-
 | 名字 | 方向 | 现在有没有 | 实际做什么 |
 |---|---|---|---|
 | [反向 hop](./reverse-hop.md) | 出向（egress） | 有 | NAT 后的出口节点用 QUIC **主动回连** edge，成为一个 egress backend |
 | [反向公网入口](./reverse-ingress.md) | 入向（admission） | 有 | NAT 后的节点通过公网 `rove-relay` **接受入站代理连接** |
-| **应用出口网关**（本章） | 入向（gateway） | **没有** | 客户端访问你拥有的端点，Rove 把入口映射到**服务端声明的 origin**，再走既有策略与出口 |
+| **应用出口网关**（本章） | 入向（gateway） | **T1 有** | 应用把受控 DNS 名称连到 Rove，Rove 只允许服务端配置的 origin，再走既有策略与出口 |
 
-需要把内网服务发布到公网，用 reverse ingress 或 [Subnetra](./subnetra.md)，或在 Rove 前面放 nginx / Envoy。
-那不是网关要做的事。
-
----
-
-## 为什么要网关
-
-当前三种入口都要求应用「知道自己在用代理」：设环境变量、配 SOCKS、改 SDK。这会卡住两类真实场景：
-
-- Serverless / 托管 runtime / 第三方 Webhook / 某些官方 SDK **根本没有代理开关**。
-- 企业内部推一次「全员改代理配置」的成本，远高于改一条 DNS 或一个 `base_url`。
-
-网关把接入反过来：
-
-```text
-应用 ──► https://openai.egress.internal/v1
-              │
-              ▼
-         Rove 出口网关
-              │  identity → policy → route → egress
-              ▼
-         https://api.openai.com
-```
-
-演示也不再是「看出口 IP」，而是：把 `base_url` 指过来，API 正常返回，访问日志里能看到走了哪条规则、哪个出口。
+需要把内网服务发布到公网，用 reverse ingress、[Subnetra](./subnetra.md)，或在 Rove 前面放 nginx / Envoy。
+那不是本能力要做的事。
 
 ---
 
 ## 三层，不是一个功能
 
-「加反向代理」下面其实是三件成本、风险、边界完全不同的事。
-
-| 层 | 形态 | 态度 |
+| 层 | 形态 | 状态 |
 |---|---|---|
-| **T1 SNI 透明网关** | DNS 把 `api.openai.com` 指到 Rove；读 ClientHello SNI，对照闭合 origin 白名单，TLS **不终止**，按字节转发 | **做，作为 MVP** |
-| **T2 L7 HTTPS 网关** | 客户端把 `base_url` 指到网关；按 endpoint 查服务端声明的 origin，终止 TLS 后再出站 | **做，但 origin 必须服务端声明** |
+| **T1 SNI 透明网关** | DNS 把允许的域名指到 Rove；读 ClientHello SNI，对照闭合 origin 白名单，TLS **不终止**，按字节转发 | **已交付** |
+| **T2 L7 HTTPS 网关** | 客户端把 `base_url` 指到网关；按 endpoint 查服务端声明的 origin，终止 TLS 后再出站 | 规划中 |
 | **T3 通用反代 / API 网关** | 虚拟主机、ACME、后端池、健康检查、重写、WAF | **明确不做** |
 
-它们都只是新的 **listener adapter**，接到同一条
-`identity → policy → route → egress → transport → observability` 主干。
-策略层和出口层不需要为网关另起炉灶。
+三者都只能接到同一条
+`identity → policy → route → egress → transport → observability` 主干上；策略层和出口层不为网关另起炉灶。
 
 | 入口 | identity 来源 | target 来源 |
 |---|---|---|
 | HTTP CONNECT | `Proxy-Authorization` | 客户端 CONNECT 行 |
 | SOCKS5 | RFC 1929 | 客户端请求 |
 | TUIC | `frontends.tuic` | 客户端请求 |
-| **sni（规划）** | listener 绑定身份，或源 IP ACL | ClientHello SNI ∩ **服务端白名单** |
-| **gateway（规划）** | `frontends.gateway` bearer token | **服务端声明的 endpoint → origin 表** |
+| **sni（T1）** | listener 绑定的快照用户 | ClientHello SNI ∩ **本地闭合白名单** |
+| **gateway（T2，规划）** | `frontends.gateway` bearer token | **服务端声明的 endpoint → origin 表** |
 
 ---
 
-## T1｜SNI 透明网关（规划中）
+## T1｜SNI 透明网关
 
-DNS（split-horizon / CoreDNS rewrite / hosts）把目标域名指到 Rove。Rove 读 TLS ClientHello 的 SNI，
-对照**闭合 origin 白名单**，命中后套用该 listener 绑定身份的策略，选出口，把已读字节连同后续流量转发出去。
+DNS（split-horizon、CoreDNS rewrite 或受管 hosts）把目标 DNS 名称指到 Rove。应用仍以原始名称发起 TLS；
+Rove 在有界窗口内解析 ClientHello 的 SNI，只有它同时满足有效 TLS、规范 DNS 名和本机 `origins` 白名单时，
+才会套用 listener 绑定身份的策略、选择出口、回放已读字节并继续透传。
 
-决定性属性：**不终止 TLS**。节点看不到明文，不持有 origin 证书，不接触 API key。
-治理的是路径，不是数据。
+它**不终止 TLS**：节点看不到 HTTP 内容、不持有 origin 证书、不接触 API key。治理的是路径，不是数据。
 
-现有实现已经覆盖大部分零件：`src/sniff.rs` 抽 SNI、`PrefixedIo` 回放已读字节、
-`decide_with_sniff` 按嗅探主机选路、`outbound::connect` 与 `splice` 原样复用。
-缺的是一个新的 listener 类型，以及「SNI 必须落在白名单里」这条 fail-close。
-
-L4 没有 per-request 凭据，身份必须显式解决，否则就是开放中继：
-
-- 首选：listener 绑定快照里的一个用户，`identity = "team-agent"`，缺了就拒绝启动。
-- 备选：源 IP → 身份 ACL（由快照下发），未知源 IP 直接断开。
-- **禁止**：无身份即放行。
-
-SNI 缺失、畸形、超长、或不在 `origins` 白名单 → **立即断开**。不回落直连，不按 SNI 随意拨号。
-
-配置草案（未实现，不要照抄上线）：
+### 配置
 
 ```toml
 [[listeners]]
 name     = "egress-sni"
 protocol = "sni"
-listen   = "127.0.0.1:8443"
+listen   = "0.0.0.0:443"
 identity = "team-agent"
 origins  = [
   "api.openai.com",
   "api.anthropic.com",
   "generativelanguage.googleapis.com",
 ]
+
+# 可选：限制读 ClientHello 的时间和字节数；T1 始终使用这两个上限。
+[listeners.sniff]
+max_bytes = 16384
+timeout_ms = 500
 ```
+
+- `identity` 必填，且连接建立时必须在**当前快照**中存在且未过期；未知或过期身份直接断开。
+  它没有客户端凭据，因而不能省略身份或使用匿名回退。
+- `origins` 至少一个。只接受精确 DNS 名；大小写和末尾点会规范化，URL、IP、通配符、无效或重复名称会使配置校验失败。
+- `protocol = "sni"` **禁止** `[listeners.tls]`。它透传客户端原始 TLS，而不是接收 TLS 后再解密。
+- SNI 中没有端口。Rove 将应用连接到的 listener 端口作为 origin 端口：通常把 DNS 改写到 `:443`，所以它也拨 `:443`；
+  使用非 443 端口时必须确保 origin 在同一端口服务。
+- `sniff.enabled` 与 `sniff.mode` 不改变 T1 的准入语义；T1 总会在 `max_bytes` / `timeout_ms` 上限内读取 ClientHello。
+
+### 实际数据路径
+
+```text
+应用 ── TLS ClientHello(SNI=api.example.com) ──► Rove :443
+                                                     │
+          快照身份有效 + 精确 origins 命中          │
+                                                     ▼
+                     identity → policy → route → egress → TLS origin :443
+```
+
+实现复用 `sniff` 的受限 ClientHello 解析、`PrefixedIo` 的字节回放、`decide_with_sniff` 的策略决策、
+`outbound::connect` 的 direct / HTTP / SOCKS5 出口，以及 `splice` 的双向传输和限速。访问日志和诊断仍会记录
+策略、出口和失败阶段；T1 成功或策略处理的记录额外带 `ingress_mode: "sni"` 和服务端 origin 标识，
+不记录路径、请求头、请求体或 TLS payload。
+
+### 失败即断开
+
+T1 没有 HTTP 错误页：以下情况均在**拨出前关闭 TCP**，没有默认 origin、没有直连回退、没有按任意 SNI 拨号：
+
+| 情形 | 行为 |
+|---|---|
+| 配置缺少 identity / origins，白名单无效或误配 TLS | 启动前配置校验失败 |
+| 当前快照没有绑定身份，或用户已过期 | 关闭连接 |
+| 非 TLS、ClientHello 畸形、超时、超限、ECH 导致无可见 SNI | 关闭连接 |
+| SNI 不在 `origins` | 关闭连接 |
+| 策略结果为 `block`、连接数超限、出口拨号失败 | 关闭连接 |
+
+T1 不支持 QUIC / HTTP/3，也不能读取 ECH 的内层名称。若应用只能改 `base_url`、不能保持原始 DNS 名和 TLS SNI，
+请等待 T2，而不是把 Host 当作任意目标地址。
+
+**这是 L4/SNI 边界，不是 HTTP 语义检查。** TLS 建立后 Rove 不可见加密请求中的 Host、CONNECT 或业务协议；
+不要把允许的 CDN、共享 HTTPS 代理或可 domain-front 的名称当作“只允许某个应用 API”的证明。需要应用层 origin
+约束时，应使用专用、不可共享的 origin，或等待会终止 TLS 的 T2。
+
+### 部署注意事项
+
+DNS 改写只应覆盖 `origins` 中的名称，并让客户端的 TLS 校验继续使用原始 origin 名称。Rove 自己的 egress DNS
+必须把该名称解析到**真正的 origin**，不能再次解析到本 gateway；需要时配置独立的 `[dns]`、split-horizon 视图或
+将网关监听地址从 egress DNS 回答中排除，否则会形成自我回环。
+
+`identity` 是服务端对整条 listener 的归属，不是终端用户认证。若多租户之间需要不同策略或审计身份，应配置多个
+SNI listener，并使用各自的端口 / 地址 / DNS 视图和快照用户；不要用一个 listener 承载不受控名称。
 
 ---
 
 ## T2｜L7 HTTPS 网关（规划中）
 
-客户端把 SDK 的 `base_url` 指到网关，带 `Authorization: Bearer …`。
-网关按 endpoint（Host，可选 path 前缀）查**服务端声明的 origin**，再走既有策略与出口。
+客户端把 SDK 的 `base_url` 指到网关，带 `Authorization: Bearer …`。网关将按 endpoint（Host，可选 path 前缀）
+查**服务端声明的 origin**，再走既有策略与出口。
 
-**生死线：origin 只能来自节点本地配置或控制面快照，绝不能来自客户端的 Host、URL 或路径。**
-否则这不是网关，是一个带 TLS 的开放正向代理，也是 SSRF 入口。未命中的 Host 一律拒绝
-（草案用 `421 Misdirected Request`），不得按 Host 拨号。
+**生死线：origin 只能来自节点本地配置或控制面快照，绝不能来自客户端的 Host、URL 或路径。** 否则这不是网关，
+而是带 TLS 的开放正向代理，也是 SSRF 入口。未命中的 Host 必须拒绝，不能按 Host 拨号。
 
-身份复用已有的 `frontends.<协议>` 命名空间，TUIC 已经在用。网关占用 `frontends.gateway`，
-编译期检测同一 key 被两个用户占用。同一条 keep-alive 连接上换 token 必须重新鉴权，
-不得复用第一个请求的身份。
-
-`endpoint → origin` 表应放在快照里，让控制面成为映射关系的真相来源。快照结构带
-`deny_unknown_fields`：老节点收到带新字段的文档会**整份拒收**，继续用上一份有效快照，
-而不是忽略未知字段后按旧语义放行。
-
-访问日志默认**不记录 path / query / 请求头**。终止 TLS 之后这些字段可见，而 API key
-出现在 query 里是常见的；默认记下来，日志本身就变成凭据泄露面。
-
-配置草案（未实现）：
-
-```toml
-[[listeners]]
-name     = "egress-gateway"
-protocol = "gateway"
-listen   = "127.0.0.1:8443"
-
-[listeners.tls]
-cert = "/etc/rove/gw.crt"
-key  = "/etc/rove/gw.key"
-
-[listeners.gateway]
-max_body_bytes  = 16777216
-request_timeout = "60s"
-log_path        = false
-```
-
-快照侧草案：
-
-```jsonc
-{
-  "schema_version": 1,
-  "endpoints": {
-    "openai.egress.internal":    { "origin": "https://api.openai.com" },
-    "anthropic.egress.internal": { "origin": "https://api.anthropic.com" }
-  }
-}
-```
-
-T2 不做这些事：不解析请求体和 SSE、不注入或轮换 API key、不做模型路由、不做响应缓存、
-不在节点里理解 OpenAI / 券商的业务语义。优化的仍然是路径、出口、认证、限速和审计。
+T2 预计使用独立的 `frontends.gateway` 身份命名空间，并默认不把 path、query、请求头写入访问日志。它不做请求体
+解析、API key 注入或轮换、模型路由、响应缓存、证书签发、后端池、重写或 WAF。
 
 ---
 
 ## T3｜通用反向代理 —— 不做
 
-虚拟主机、ACME 自动签发、后端池与负载均衡、主动健康检查、灰度、重写规则、WAF，
-是 nginx / Envoy / Traefik 的产品，不是 Rove 的。
-
-- 会把节点推向管理面，违反「节点只消费快照」的边界。
-- 方向是 ingress 产品，会稀释而不是强化 application egress plane。
-- 正当需求已经有着落：发布内网服务用 [reverse ingress](./reverse-ingress.md) 或
-  [Subnetra](./subnetra.md)；更复杂的 HTTP 入口放在 Rove **前面**。
+虚拟主机、ACME 自动签发、后端池与负载均衡、主动健康检查、灰度、重写规则和 WAF 是 nginx / Envoy / Traefik 的产品，
+不是 Rove 的。发布内网服务用 [反向公网入口](./reverse-ingress.md) 或 [Subnetra](./subnetra.md)；更复杂的 HTTP
+入口放在 Rove 前面。
 
 ---
 
-## 失败就必须拒绝
+## 怎么选
 
-网关落地时，下面每一行都要有测试。今天还没有实现，所以这是验收清单，不是当前行为。
+| 我想…… | 使用方式 |
+|---|---|
+| 应用能配 `HTTP_PROXY` / SOCKS / TUIC | [客户端接入](./client-setup.md) |
+| 应用不能配代理，但可把允许的原始域名 DNS 改到 Rove | **T1 SNI 透明网关** |
+| 应用只能改 `base_url`，且需要 TLS 终止和 endpoint 映射 | 等 T2 |
+| 出口藏在 NAT 后 | [反向 hop](./reverse-hop.md) |
+| 让公网连进 NAT 后的 listener | [反向公网入口](./reverse-ingress.md) |
+| 打进隔离网段 | [Subnetra](./subnetra.md) |
+| 虚拟主机 / 证书签发 / WAF | nginx / Envoy |
 
-| 情形 | 要求行为 | 禁止行为 |
-|---|---|---|
-| SNI 缺失 / 畸形 / 超长 | 断开 | 回落直连、回落默认 origin |
-| SNI 不在 `origins` | 断开 | 按 SNI 直接拨号 |
-| 网关请求无 `Authorization` | `401` | 匿名放行 |
-| token 未知 / 用户过期 / block | `401` / `403` | — |
-| `Host` 不在 endpoint 表 | `421` | 按 Host 拨号 |
-| 同一连接更换 token | 重新鉴权 | 复用首个请求的身份 |
-| origin 拨号失败 | `502` | 静默换出口（除非显式 chain） |
-| 快照为空 | 全拒绝 | — |
-
-规划中的审计字段：`ingress_mode`（`forward` / `sni` / `gateway`）、`endpoint`、`origin_id`。
-现有 `policy_id` / `matched_route` / `decision` / `egress` 继续复用。
-
----
-
-## 怎么选现有能力
-
-| 我想…… | 现在用 | 不要用网关去…… |
-|---|---|---|
-| 应用能配 `HTTP_PROXY` / SOCKS / TUIC | [客户端接入](./client-setup.md) | 等一个还没落地的入口 |
-| 出口藏在 NAT 后 | [反向 hop](./reverse-hop.md) | 把 hop 误叫成 reverse proxy |
-| 让公网连进 NAT 后的 listener | [反向公网入口](./reverse-ingress.md) | 把它当成 HTTP 反代 |
-| 打进隔离网段 | [Subnetra](./subnetra.md) | 在网关里做内网发布 |
-| 应用改不了代理，只能改 DNS 或 `base_url` | 等 T1 / T2；本章是方向 | 把任意 Host 转发出去 |
-| 虚拟主机 / 证书签发 / WAF | nginx / Envoy | 让 Rove 变成通用反代 |
-
-完整非目标见 [项目画像与方向](./roadmap.md)。
+完整边界和质量门禁见[项目画像与方向](./roadmap.md)。

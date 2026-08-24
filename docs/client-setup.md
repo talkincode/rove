@@ -1,9 +1,8 @@
 # 客户端接入
 
-节点当前提供四种入口，全部需要认证。客户端按入口填参数即可。
-
-应用改不了代理、只能改 DNS 或 `base_url` 时，看规划中的 [应用出口网关](./egress-gateway.md)
-（SNI 透传 / 声明式 origin）。那一页还没落地，不要把现有 HTTP/SOCKS/TUIC 入口配成「反代」。
+代理客户端当前使用 HTTP、HTTPS、SOCKS5、SOCKS5-TLS 或 TUIC，全部需要各自的客户端凭据。另有不需要
+客户端代理设置的 [应用出口网关](./egress-gateway.md)：T1 SNI 透明入口已可用，T2 `base_url` HTTPS 网关仍在规划。
+不要把 HTTP/SOCKS/TUIC 入口配成「反代」。
 也不要把 [反向 hop](./reverse-hop.md) 或 [反向公网入口](./reverse-ingress.md) 理解成反向代理——
 那两个词在本仓库里已经各有含义。
 
@@ -39,6 +38,20 @@
 | UDP ASSOCIATE | 支持，见下 | 同左 |
 
 `socks5tls` 需要客户端原生支持「SOCKS5 over TLS」。只想加密代理连接时，优先用 HTTPS 入口。
+
+## T1 SNI 透明应用出口网关
+
+适用于应用**不能设置代理**、但能保留原始目标名称并让 DNS 指向 Rove 的场景。客户端无需填写代理地址、
+用户名或密码；它仍照常连接 `https://api.example.com`，而部署者只将这个已允许的域名在客户端 DNS 视图中
+改写到 Rove 的 `protocol = "sni"` listener。
+
+- 客户端必须发送普通 TLS ClientHello SNI；无 SNI、ECH 内层名称、QUIC/HTTP3 不适用。
+- listener 的服务端 `identity` 是当前快照中的用户，不是客户端凭据；`origins` 是闭合精确白名单。
+- listener 与 origin 使用同一端口，通常均为 `443`；Rove 会原样转发 TLS，不需要也不应安装 origin 证书。
+- 只为 `origins` 中的名称改写 DNS，并保证 Rove 的 egress DNS 解析真实 origin，而非网关自身，避免回环。
+
+完整配置、拒绝语义和多租户边界见[应用出口网关](./egress-gateway.md)。若应用只能修改 `base_url`，请等待
+规划中的 T2，而不是把客户端 Host 当作转发目标。
 
 ## TUIC v5
 

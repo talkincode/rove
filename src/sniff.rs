@@ -602,7 +602,10 @@ fn normalize_http_authority(authority: &str) -> Option<String> {
     normalize_dns_name(host)
 }
 
-fn normalize_dns_name(host: &str) -> Option<String> {
+/// Normalize an exact DNS name accepted both from a TLS ClientHello and from
+/// server-side listener configuration. IP literals, wildcard forms, URLs and
+/// malformed labels deliberately have no representation here.
+pub(crate) fn normalize_dns_name(host: &str) -> Option<String> {
     let host = host.trim().trim_end_matches('.');
     if host.is_empty()
         || host.len() > 253

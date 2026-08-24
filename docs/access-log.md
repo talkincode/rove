@@ -23,7 +23,7 @@ jq 'select(.kind=="stats")'      logs/access.2026-07-01   # 每 60 秒心跳
 | `timestamp` | 完成时间 |
 | `node_id` | 节点标识 |
 | `listener` | 入口名 |
-| `protocol` | `http` / `socks5` 等 |
+| `protocol` | `http` / `socks5` / `sni` 等 |
 | `client_addr` | **客户端来源 `ip:port`**；reverse ingress 下由已认证 relay 可信传递 |
 | `client_addr_source` | reverse ingress 流量为 `reverse_ingress`；普通本地 accept 时省略 |
 | `relay_addr` / `relay_instance_id` | 实际隧道对端与 relay 实例 |
@@ -32,8 +32,9 @@ jq 'select(.kind=="stats")'      logs/access.2026-07-01   # 每 60 秒心跳
 | `username` | 认证用户名 |
 | `target_host` / `target_port` | 兼容既有目标字段；成功/出站失败时是拨号目标，前置拒绝时是请求目标 |
 | `requested_host` / `requested_port` | 客户端在代理协议中声明的目标 |
-| `sniffed_host` / `sniff_protocol` | observe-only 从首包识别出的域名及 `tls` / `http` 来源；未匹配时省略 |
-| `sniff_outcome` | `matched` / `unsupported` / `timeout` / `malformed` / `limit_exceeded` / `incomplete` |
+| `ingress_mode` / `origin_id` | 仅网关：入口模式和服务端声明的 origin 标识。T1 为 `sni` 与允许的 DNS 名；不含客户端路径、请求头或凭据。 |
+| `sniffed_host` / `sniff_protocol` | 从有界首包识别出的域名及 `tls` / `http` 来源；未匹配时省略 |
+| `sniff_outcome` | `matched` / `unsupported` / `timeout` / `malformed` / `limit_exceeded` / `incomplete`；即使 T1 在取得目标前断开，也会保留该结果 |
 | `effective_policy_host` | 当前策略候选 host；observe-only 阶段与 requested host 相同 |
 | `policy_id` | 做出该决策的 routing policy id。**省略**表示压根没有查到策略——未知用户，或用户指向了快照未定义的 policy；这与「策略主动拒绝」是两类事件 |
 | `matched_route` | 命中路由在该 policy `routes` 数组中的下标（从 0 开始）。**省略**表示没有任何 route 命中，由 `default_action` 决定 |

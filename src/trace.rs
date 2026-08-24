@@ -18,6 +18,14 @@ pub struct TrafficIdentity {
     pub policy: crate::model::PolicyAttribution,
     pub dial_host: String,
     pub dial_port: u16,
+    /// Listener-adapter mode when it is meaningful to distinguish a gateway
+    /// connection from an ordinary forward-proxy tunnel. Never carries request
+    /// headers, paths, queries, or credentials.
+    pub ingress_mode: Option<&'static str>,
+    /// Server-declared origin identifier for a gateway path. T1 SNI uses the
+    /// allowed origin hostname itself; future L7 gateway mappings may use a
+    /// stable control-plane id instead.
+    pub origin_id: Option<String>,
 }
 
 impl TrafficIdentity {
@@ -30,6 +38,8 @@ impl TrafficIdentity {
             policy: crate::model::PolicyAttribution::for_host(host.clone()),
             dial_host: host,
             dial_port: port,
+            ingress_mode: None,
+            origin_id: None,
         }
     }
 
@@ -40,6 +50,21 @@ impl TrafficIdentity {
 
     pub fn with_policy(mut self, policy: crate::model::PolicyAttribution) -> Self {
         self.policy = policy;
+        self
+    }
+
+    pub fn with_gateway_origin(
+        mut self,
+        ingress_mode: &'static str,
+        origin_id: impl Into<String>,
+    ) -> Self {
+        self.ingress_mode = Some(ingress_mode);
+        self.origin_id = Some(origin_id.into());
+        self
+    }
+
+    pub fn with_ingress_mode(mut self, ingress_mode: &'static str) -> Self {
+        self.ingress_mode = Some(ingress_mode);
         self
     }
 }
@@ -74,6 +99,10 @@ pub struct TraceCandidate {
     pub target_host: Option<String>,
     pub target_port: Option<u16>,
     pub traffic: Option<TrafficIdentity>,
+    /// Bounded ingress classification retained when a connection is rejected
+    /// before it has a valid target and therefore cannot construct a
+    /// [`TrafficIdentity`]. Ordinary successful paths keep this in `traffic`.
+    pub sniff: Option<crate::sniff::SniffObservation>,
     pub decision: Option<String>,
     /// Physical egress actually used when it differs from `decision` (chain
     /// decisions): the winning member's outlet label, e.g. `reverse:h1`.
@@ -180,7 +209,9 @@ impl ProbeTracer {
             TraceResult::Error => "error",
         };
         let traffic = candidate.traffic.as_ref();
-        let sniff = traffic.and_then(|identity| identity.sniff.as_ref());
+        let sniff = traffic
+            .and_then(|identity| identity.sniff.as_ref())
+            .or(candidate.sniff.as_ref());
         let requested_host = traffic.map(|identity| identity.requested_host.clone());
         let requested_port = traffic.map(|identity| identity.requested_port);
         let sniffed_host = sniff.and_then(|observation| observation.host.clone());
@@ -304,6 +335,7 @@ mod tests {
                         host: Some("example.com".to_string()),
                     },
                 )),
+                sniff: None,
                 decision: Some("direct".to_string()),
                 egress: None,
                 chain_member: None,
@@ -334,6 +366,7 @@ mod tests {
                 target_host: Some("example.com".to_string()),
                 target_port: Some(443),
                 traffic: None,
+                sniff: None,
                 decision: Some("direct".to_string()),
                 egress: None,
                 chain_member: None,
@@ -346,5 +379,50 @@ mod tests {
             })
             .await;
         assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn probe_keeps_sniff_for_a_rejection_without_a_target() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let tracer = ProbeTracer::new(tx);
+        let mut arm = ProbeArm::new(
+            "probe-sni".to_string(),
+            "rove/replies/probe-sni".to_string(),
+            Duration::from_secs(30),
+        );
+        arm.username = Some("alice".to_string());
+        arm.protocol = Some("sni".to_string());
+        tracer.arm(arm).await;
+
+        tracer
+            .finish(TraceCandidate {
+                listener: "egress-sni".to_string(),
+                protocol: "sni".to_string(),
+                client_addr: Some("198.51.100.9:4000".to_string()),
+                username: Some("alice".to_string()),
+                target_host: None,
+                target_port: None,
+                traffic: None,
+                sniff: Some(crate::sniff::SniffObservation {
+                    outcome: crate::sniff::SniffOutcome::Malformed,
+                    protocol: None,
+                    host: None,
+                }),
+                decision: None,
+                egress: None,
+                chain_member: None,
+                attempts: None,
+                result: TraceResult::Error,
+                failure_stage: Some("sni".to_string()),
+                message: Some("valid TLS SNI is required".to_string()),
+                snapshot_version: 12,
+                duration_ms: 3,
+            })
+            .await;
+
+        let report = rx.recv().await.unwrap();
+        assert_eq!(report.sniff_outcome, Some("malformed"));
+        assert_eq!(report.sniff_protocol, None);
+        assert_eq!(report.sniffed_host, None);
     }
 }

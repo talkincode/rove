@@ -546,6 +546,7 @@ fn record(
         target_host,
         target_port,
         traffic: None,
+        sniff: None,
         decision: Some(format!("reverse:{}", ctx.hop_id)),
         egress: None,
         chain_member: None,

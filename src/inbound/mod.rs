@@ -3,6 +3,7 @@
 
 pub mod http;
 pub mod listener;
+pub mod sni;
 pub mod socks5;
 pub mod socks5_udp;
 pub mod tuic;

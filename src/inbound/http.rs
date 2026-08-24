@@ -1165,6 +1165,7 @@ async fn report_trace(ctx: &Arc<Ctx>, started: Instant, peer: SocketAddr, fields
         target_host: fields.target_host,
         target_port: fields.target_port,
         traffic,
+        sniff: fields.sniff.clone(),
         decision: fields.decision,
         egress: fields.egress,
         chain_member: fields.chain_member,

@@ -1,8 +1,8 @@
 //! TCP accept loop with an optional TLS wrap, then protocol dispatch.
 
-use super::{http, socks5, Ctx};
+use super::{http, sni, socks5, Ctx};
 use crate::access_log::AccessLogger;
-use crate::config::Listener;
+use crate::config::{Listener, SniGatewayConfig};
 use crate::diagnostics::DiagnosticRegistry;
 use crate::engine::Engine;
 use crate::io::IoStream;
@@ -21,17 +21,24 @@ pub struct BoundListener {
     cfg: Listener,
     acceptor: Option<TlsAcceptor>,
     proto: String,
+    sni: Option<SniGatewayConfig>,
     listener: TcpListener,
 }
 
 impl BoundListener {
     pub async fn bind(cfg: Listener, stats: Arc<TrafficStats>) -> anyhow::Result<Self> {
+        cfg.validate()?;
+        let proto = cfg.protocol.trim().to_ascii_lowercase();
+        let sni = if proto == "sni" {
+            Some(cfg.sni_gateway_config()?)
+        } else {
+            None
+        };
         let acceptor = match &cfg.tls {
             Some(t) => Some(crate::tls::server_acceptor_with_sni(t)?),
             None => None,
         };
-        let proto = cfg.protocol.to_ascii_lowercase();
-        if proto != "http" && proto != "socks5" {
+        if proto != "http" && proto != "socks5" && proto != "sni" {
             anyhow::bail!("listener {}: unknown protocol {:?}", cfg.name, cfg.protocol);
         }
 
@@ -50,6 +57,7 @@ impl BoundListener {
             cfg,
             acceptor,
             proto,
+            sni,
             listener,
         })
     }
@@ -73,6 +81,7 @@ impl BoundListener {
             cfg,
             acceptor,
             proto,
+            sni,
             listener,
         } = self;
         let ctx = Arc::new(Ctx {
@@ -104,9 +113,10 @@ impl BoundListener {
                     };
                     let acceptor = acceptor.clone();
                     let proto = proto.clone();
+                    let sni = sni.clone();
                     let ctx = ctx.clone();
                     connections.spawn(async move {
-                        if let Err(e) = serve_conn(stream, acceptor, &proto, ctx, peer).await {
+                        if let Err(e) = serve_conn(stream, acceptor, &proto, sni, ctx, peer).await {
                             debug!(peer = %peer, error = %e, "connection ended");
                         }
                     });
@@ -183,6 +193,7 @@ async fn serve_conn(
     stream: TcpStream,
     acceptor: Option<TlsAcceptor>,
     proto: &str,
+    sni: Option<SniGatewayConfig>,
     ctx: Arc<Ctx>,
     peer: SocketAddr,
 ) -> anyhow::Result<()> {
@@ -199,9 +210,9 @@ async fn serve_conn(
         match acceptor {
             Some(acc) => {
                 let tls = acc.accept(stream).await?;
-                dispatch(tls, proto, ctx, client_peer, local).await
+                dispatch(tls, proto, sni, ctx, client_peer, local).await
             }
-            None => dispatch(stream, proto, ctx, client_peer, local).await,
+            None => dispatch(stream, proto, sni, ctx, client_peer, local).await,
         }
     })
     .await
@@ -210,6 +221,7 @@ async fn serve_conn(
 async fn dispatch<S>(
     stream: S,
     proto: &str,
+    sni: Option<SniGatewayConfig>,
     ctx: Arc<Ctx>,
     peer: SocketAddr,
     local: Option<SocketAddr>,
@@ -220,6 +232,16 @@ where
     match proto {
         "http" => http::serve(stream, ctx, peer).await,
         "socks5" => socks5::serve(stream, ctx, peer, local).await,
+        "sni" => {
+            sni::serve(
+                stream,
+                ctx,
+                peer,
+                sni.expect("sni listener must have normalized gateway configuration"),
+                local,
+            )
+            .await
+        }
         other => {
             error!(protocol = other, "no handler");
             Ok(())
@@ -241,6 +263,8 @@ mod tests {
             listen: "127.0.0.1:0".to_string(),
             tls: None,
             sniff: crate::config::SniffConfig::default(),
+            identity: None,
+            origins: Vec::new(),
         };
 
         let err = run(
@@ -266,6 +290,8 @@ mod tests {
             listen: "not-an-address".to_string(),
             tls: None,
             sniff: crate::config::SniffConfig::default(),
+            identity: None,
+            origins: Vec::new(),
         };
 
         let err = run(
@@ -297,6 +323,8 @@ mod tests {
             listen: format!("127.0.0.1:{port}"),
             tls: None,
             sniff: crate::config::SniffConfig::default(),
+            identity: None,
+            origins: Vec::new(),
         };
         let task = tokio::spawn(run(
             cfg,
@@ -327,6 +355,8 @@ mod tests {
             listen: format!("127.0.0.1:{port}"),
             tls: None,
             sniff: crate::config::SniffConfig::default(),
+            identity: None,
+            origins: Vec::new(),
         };
         let task = tokio::spawn(run(
             cfg,
@@ -368,6 +398,8 @@ mod tests {
                 certificates: Vec::new(),
             }),
             sniff: crate::config::SniffConfig::default(),
+            identity: None,
+            origins: Vec::new(),
         };
         let task = tokio::spawn(run(
             cfg,

@@ -3,6 +3,8 @@
 //! control plane, and which ports to listen on.
 
 use serde::Deserialize;
+use std::collections::HashSet;
+use std::sync::Arc;
 
 #[derive(Debug, Deserialize)]
 pub struct Config {
@@ -155,20 +157,114 @@ impl ShutdownConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct Listener {
     pub name: String,
-    /// `http` or `socks5`. TLS is orthogonal (set `[listeners.tls]`).
+    /// `http`, `socks5`, or the TLS-transparent `sni` gateway. TLS is
+    /// orthogonal for HTTP/SOCKS5 only (set `[listeners.tls]`).
     pub protocol: String,
     pub listen: String,
     #[serde(default)]
     pub tls: Option<TlsFiles>,
     #[serde(default)]
     pub sniff: SniffConfig,
+    /// The snapshot user bound to a `protocol = "sni"` listener. SNI is L4
+    /// and has no per-request credential, so a missing identity would turn the
+    /// listener into an anonymous relay; it is therefore mandatory for SNI and
+    /// forbidden on the ordinary forward-proxy listeners.
+    #[serde(default)]
+    pub identity: Option<String>,
+    /// Exact DNS origins allowed by a `protocol = "sni"` listener. This is a
+    /// closed server-side allowlist, never a client-provided dial target.
+    #[serde(default)]
+    pub origins: Vec<String>,
+}
+
+/// Runtime-normalized configuration for the TLS-transparent SNI gateway.
+/// Kept separate from the deserialized listener shape so all handler tasks use
+/// canonical DNS names and do not have to repeat configuration validation.
+#[derive(Debug, Clone)]
+pub(crate) struct SniGatewayConfig {
+    pub identity: String,
+    origins: Arc<HashSet<String>>,
+}
+
+impl SniGatewayConfig {
+    pub(crate) fn allows(&self, host: &str) -> bool {
+        self.origins.contains(host)
+    }
 }
 
 impl Listener {
-    fn validate(&self) -> anyhow::Result<()> {
+    pub(crate) fn validate(&self) -> anyhow::Result<()> {
         self.sniff
             .validate(&format!("listener {}", self.name.trim()))?;
+        let protocol = self.protocol.trim().to_ascii_lowercase();
+        if protocol == "sni" {
+            self.sni_gateway_config()?;
+        } else {
+            anyhow::ensure!(
+                self.identity.is_none(),
+                "listener {}: identity is only valid for protocol = \"sni\"",
+                self.name
+            );
+            anyhow::ensure!(
+                self.origins.is_empty(),
+                "listener {}: origins are only valid for protocol = \"sni\"",
+                self.name
+            );
+        }
         Ok(())
+    }
+
+    /// Validate and compile the fields exclusive to the transparent SNI
+    /// listener. The caller must use this before accepting connections too:
+    /// integration users can construct [`Listener`] directly without going
+    /// through [`Config::load`].
+    pub(crate) fn sni_gateway_config(&self) -> anyhow::Result<SniGatewayConfig> {
+        anyhow::ensure!(
+            self.protocol.trim().eq_ignore_ascii_case("sni"),
+            "listener {}: sni gateway configuration requires protocol = \"sni\"",
+            self.name
+        );
+        anyhow::ensure!(
+            self.tls.is_none(),
+            "listener {}: protocol = \"sni\" must not set [listeners.tls]; it transparently relays TLS",
+            self.name
+        );
+        let identity = self
+            .identity
+            .as_deref()
+            .map(str::trim)
+            .filter(|identity| !identity.is_empty())
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "listener {}: protocol = \"sni\" requires a non-empty identity",
+                    self.name
+                )
+            })?
+            .to_string();
+        anyhow::ensure!(
+            !self.origins.is_empty(),
+            "listener {}: protocol = \"sni\" requires at least one origin",
+            self.name
+        );
+
+        let mut origins = HashSet::with_capacity(self.origins.len());
+        for origin in &self.origins {
+            let normalized = crate::sniff::normalize_dns_name(origin).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "listener {}: invalid SNI origin {origin:?}; expected an exact DNS name",
+                    self.name
+                )
+            })?;
+            anyhow::ensure!(
+                origins.insert(normalized.clone()),
+                "listener {}: duplicate SNI origin {normalized:?}",
+                self.name
+            );
+        }
+        Ok(SniGatewayConfig {
+            identity,
+            origins: Arc::new(origins),
+        })
     }
 }
 
@@ -1209,6 +1305,100 @@ listen = "127.0.0.1:8080"
             let error = Config::load(&path).unwrap_err();
             assert!(error.to_string().contains(expected), "{name}: {error}");
             let _ = std::fs::remove_file(path);
+        }
+    }
+
+    #[test]
+    fn sni_listener_requires_a_bound_identity_and_closed_dns_origins() {
+        let path = temp_path("sni-listener.toml");
+        std::fs::write(
+            &path,
+            r#"
+node_id = "edge-1"
+[control_plane]
+snapshot_url = "http://127.0.0.1/snapshot"
+token = "test"
+[[listeners]]
+name = "egress-sni"
+protocol = "sni"
+listen = "127.0.0.1:8443"
+identity = " team-agent "
+origins = ["API.Example.COM.", "api2.example.com"]
+"#,
+        )
+        .unwrap();
+        let config = Config::load(&path).unwrap();
+        let sni = config.listeners[0].sni_gateway_config().unwrap();
+        assert_eq!(sni.identity, "team-agent");
+        assert!(sni.allows("api.example.com"));
+        assert!(sni.allows("api2.example.com"));
+        let _ = std::fs::remove_file(&path);
+
+        for (name, listener, expected) in [
+            (
+                "missing-identity",
+                r#"protocol = "sni"
+listen = "127.0.0.1:8443"
+origins = ["api.example.com"]"#,
+                "requires a non-empty identity",
+            ),
+            (
+                "empty-origins",
+                r#"protocol = "sni"
+listen = "127.0.0.1:8443"
+identity = "team-agent"
+origins = []"#,
+                "requires at least one origin",
+            ),
+            (
+                "duplicate-normalized-origin",
+                r#"protocol = "sni"
+listen = "127.0.0.1:8443"
+identity = "team-agent"
+origins = ["API.EXAMPLE.COM.", "api.example.com"]"#,
+                "duplicate SNI origin",
+            ),
+            (
+                "url-origin",
+                r#"protocol = "sni"
+listen = "127.0.0.1:8443"
+identity = "team-agent"
+origins = ["https://api.example.com"]"#,
+                "invalid SNI origin",
+            ),
+            (
+                "tls-termination",
+                r#"protocol = "sni"
+listen = "127.0.0.1:8443"
+identity = "team-agent"
+origins = ["api.example.com"]
+[listeners.tls]
+cert = "server.crt"
+key = "server.key""#,
+                "must not set [listeners.tls]",
+            ),
+            (
+                "identity-on-http",
+                r#"protocol = "http"
+listen = "127.0.0.1:8080"
+identity = "team-agent""#,
+                "identity is only valid",
+            ),
+        ] {
+            let invalid_path = temp_path(&format!("sni-{name}.toml"));
+            std::fs::write(
+                &invalid_path,
+                format!(
+                    "node_id = \"edge-1\"\n[control_plane]\nsnapshot_url = \"http://127.0.0.1/snapshot\"\ntoken = \"test\"\n[[listeners]]\nname = \"{name}\"\n{listener}\n"
+                ),
+            )
+            .unwrap();
+            let error = Config::load(&invalid_path).unwrap_err();
+            assert!(
+                error.to_string().contains(expected),
+                "{name} error was {error:#}"
+            );
+            let _ = std::fs::remove_file(invalid_path);
         }
     }
 

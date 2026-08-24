@@ -303,6 +303,7 @@ fn report_associate(
             target_host: None, // per-datagram; no single target for an association
             target_port: None,
             traffic: None,
+            sniff: None,
             decision: Some(decision.to_string()),
             egress: is_chain.then(|| egress_label.to_string()),
             chain_member: egress.and_then(|e| e.member_id.clone()),

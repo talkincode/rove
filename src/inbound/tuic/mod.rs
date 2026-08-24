@@ -758,6 +758,7 @@ fn record_tcp_access(ctx: &ConnCtx, started: std::time::Instant, trace: TuicTcpT
         target_host: Some(trace.host.to_string()),
         target_port: Some(trace.port),
         traffic: Some(traffic),
+        sniff: None,
         decision: Some(trace.decision.to_string()),
         egress: trace.egress.map(str::to_string),
         chain_member: trace.chain_member.map(str::to_string),

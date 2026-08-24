@@ -22,7 +22,8 @@ control_plane_unreachable_secs = 90
 [shutdown]
 grace_period_secs = 30
 
-# 应用接入监听（listener adapter）。protocol = http | socks5 ；tls 段存在即升级为 https / socks5tls。
+# 应用接入监听（listener adapter）。protocol = http | socks5 | sni。
+# TLS 段存在即把 http / socks5 升级为 https / socks5tls；sni 是 TLS 透明出口网关，禁止 tls 段。
 # http 同时支持 HTTPS 的 CONNECT 隧道与明文 HTTP 的 absolute-form 转发。
 #
 # 默认一律绑 127.0.0.1：Rove 强制认证，但数据面不应该在你明确决定之前对全网可达。
@@ -67,6 +68,19 @@ listen = "127.0.0.1:1081"
 cert = "./certs/server.crt"
 key  = "./certs/server.key"
 
+# 可选：T1 SNI 透明应用出口网关。应用保留原始 DNS 名和 TLS SNI；只把下列允许域名的 DNS
+# 改写到本 listener。不会终止 TLS、不会接受客户端指定的任意目标，也不能配置 [listeners.tls]。
+# listener 端口会成为实际 origin 端口（通常使用 443）；Rove 的 egress DNS 必须仍能解析真正 origin，避免回环。
+# [[listeners]]
+# name     = "egress-sni"
+# protocol = "sni"
+# listen   = "0.0.0.0:443"
+# identity = "team-agent"                # 当前快照中必须存在且未过期的用户
+# origins  = ["api.example.com"]          # 精确 DNS 名；不接受 IP、URL、通配符或重复项
+# [listeners.sniff]
+# max_bytes = 16384                        # T1 始终使用这两个有界 ClientHello 读取上限
+# timeout_ms = 500
+
 # TUIC v5 front-end (QUIC/UDP). Optional and independent of [[listeners]] above.
 # Auth uses per-user tuic_uuid + tuic_password from the control-plane snapshot
 # (never the login password). TCP `Connect` reuses the normal egress and is
@@ -93,7 +107,7 @@ level = "info"   # error|warn|info|debug|trace
 # 结构化访问日志（默认开启）：每条完成的连接一行 JSON，无论成功/失败，
 # 独立于 log.level 和 MQTT，是排查“某用户/某目标连不上”故障时 grep 的对象。
 # 字段：timestamp/node_id/listener/protocol/username/target_host/target_port/
-#      requested_host/requested_port/sniffed_host/sniff_protocol/sniff_outcome/
+#      requested_host/requested_port/ingress_mode/origin_id/sniffed_host/sniff_protocol/sniff_outcome/
 #      effective_policy_host/decision/result/failure_stage/message/
 #      snapshot_version/duration_ms/bytes_up/bytes_down。永不包含密码等凭据。
 [access_log]
