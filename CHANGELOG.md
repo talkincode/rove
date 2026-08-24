@@ -19,6 +19,9 @@
 
 ### Changed
 
+- 文档新增 [应用出口网关](docs/egress-gateway.md)：写清 T1 SNI 透传 / T2 声明式 origin /
+  T3 通用反代三层态度，并和已有的 reverse hop、reverse ingress 划清术语。这是方向文档，
+  代码尚未落地。
 - 文档站点首页（`docs/introduction.md`）补齐与 README 一致的产品叙事：主干写成
   `identity → policy → route → egress → transport → observability`，HTTP/SOCKS5/TUIC
   降为 listener adapter，并在站点内公开「使用边界」。FAQ 同步修正 hop 凭据说明——

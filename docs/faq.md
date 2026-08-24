@@ -21,6 +21,13 @@
 出口（egress）：直连、HTTP 上游、SOCKS5 上游、反向 hop（QUIC）、Subnetra 加密 L3 组网，
 以及按优先级故障转移的 egress chain。
 
+**Rove 能当反向代理 / API 网关用吗？**
+不能把它当成 nginx / Envoy 那种通用反代。规划中的能力叫**应用出口网关**：T1 是 SNI 透传、T2 是
+按服务端声明的 origin 转发，T3（虚拟主机、ACME、后端池、WAF）明确不做。代码还没落地。
+需要发布内网服务，用 [反向公网入口](./reverse-ingress.md) 或 [Subnetra](./subnetra.md)，
+或在 Rove 前面放 nginx。详见 [应用出口网关](./egress-gateway.md)。不要把
+[反向 hop](./reverse-hop.md) 理解成反向代理——那个词在本仓库里是 NAT 后的**出口**。
+
 ---
 
 ## 部署与运行
