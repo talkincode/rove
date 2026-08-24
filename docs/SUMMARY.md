@@ -8,6 +8,7 @@
 - [安装与部署](./installation.md)
 - [配置详解](./configuration.md)
 - [客户端接入](./client-setup.md)
+- [应用出口网关（规划中）](./egress-gateway.md)
 
 # 核心概念
 

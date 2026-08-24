@@ -53,6 +53,8 @@ HTTP CONNECT、SOCKS5、TUIC 都是 **listener adapter**，不是产品本身。
 - 不是控制面，也不是管理后台。节点只**消费**快照，不管理用户、套餐、计费。
 - 不是公共出口、不是跨境接入服务、不是机场。软件和网络运营是两回事，所有线路由部署者自行准备。
 - 不是通用反向代理或 API 网关。origin 必须由服务端声明，不能由客户端的 Host / URL 指定。
+  规划中的 SNI / L7 出口网关见 [应用出口网关](./egress-gateway.md)；发布内网服务请用
+  [reverse ingress](./reverse-ingress.md) 或 [Subnetra](./subnetra.md)。
 - 不会「失败即放行」。认证失败、账号过期、策略拒绝、快照无效时，一律保守拒绝。
 
 ---
@@ -96,6 +98,7 @@ Rove 是通用的应用网络基础设施，用于出口治理、路径优化与
 | 用二进制 / Docker / 源码部署到生产 | [安装与部署](./installation.md) |
 | 弄清每个配置项什么意思 | [配置详解](./configuration.md) |
 | 客户端接入参数 | [客户端接入](./client-setup.md) |
+| 应用改不了代理，只能改 DNS 或 base_url | [应用出口网关（规划中）](./egress-gateway.md) |
 | 理解用户、routing policy、named egress 怎么算 | [数据模型与策略决策](./data-model.md) |
 | 构建、发布并接入大型域名/IP 地址簿 | [rove-addrbook 指南](./addrbook-format.md) |
 | 对接我自己的控制面 | [控制面同步协议](./snapshot-protocol.md) |

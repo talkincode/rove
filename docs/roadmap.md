@@ -229,6 +229,13 @@ Rove 应该成为一个可以部署在边缘节点上的自包含**应用出口�
   它服务哪一类应用入口、认证如何 fail-closed、对现有 HTTP/SOCKS5/TUIC 热路径是否零回归。
   消费级代理生态的协议、订阅和一键客户端配置不在范围内。
 
+- 应用出口网关：T1 SNI 透传为 MVP，T2 声明式 origin，T3 不做
+
+  产品边界与术语见 **[应用出口网关](./egress-gateway.md)**。T1 复用现有 sniff / PrefixedIo /
+  splice，不终止 TLS；T2 可以做，但 origin 必须由服务端声明，绝不能来自客户端 Host / URL。
+  通用反代、证书签发、后端池、WAF 不是 Rove 的事——发布内网服务走 reverse ingress / Subnetra。
+  新入口不要再叫 reverse：仓库里 reverse hop 与 reverse ingress 已经各占一次。
+
 ## 验收流程与标准
 
 任何整体功能、方向能力或可发布变更，必须经过同一套可复现验收流程。验收材料应能说明“需求是什么、先写了哪些失败测试、实现后哪些测试通过、覆盖率是多少、哪些风险仍未关闭”。

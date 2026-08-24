@@ -1,6 +1,11 @@
 # 客户端接入
 
-节点提供四种入口，全部需要认证。客户端按入口填参数即可。
+节点当前提供四种入口，全部需要认证。客户端按入口填参数即可。
+
+应用改不了代理、只能改 DNS 或 `base_url` 时，看规划中的 [应用出口网关](./egress-gateway.md)
+（SNI 透传 / 声明式 origin）。那一页还没落地，不要把现有 HTTP/SOCKS/TUIC 入口配成「反代」。
+也不要把 [反向 hop](./reverse-hop.md) 或 [反向公网入口](./reverse-ingress.md) 理解成反向代理——
+那两个词在本仓库里已经各有含义。
 
 下面示例统一使用：用户 `alice` / 密码 `s3cret`，节点 `proxy.example.com`。
 

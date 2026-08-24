@@ -249,6 +249,7 @@ docker run -d --name rove -p 8080:8080 \
   （源码在 [`docs/`](./docs/)，mdBook 构建）
 - [最佳实践场景](https://rove.talkincode.net/best-practices.html) ·
   [rove-addrbook](https://rove.talkincode.net/addrbook-format.html) ·
+  [应用出口网关（规划中）](https://rove.talkincode.net/egress-gateway.html) ·
   [反向 hop](https://rove.talkincode.net/reverse-hop.html) ·
   [反向公网入口](https://rove.talkincode.net/reverse-ingress.html) ·
   [TUIC 前端](https://rove.talkincode.net/tuic.html) ·
