@@ -2919,8 +2919,16 @@ mod tests {
             ));
         }
         let elapsed = started.elapsed();
+        // LLVM coverage instrumentation inserts counters into this hot lookup path.
+        // Keep the production budget strict while allowing the instrumented test
+        // binary a bounded amount of that bookkeeping overhead.
+        let max_elapsed = if cfg!(coverage) {
+            std::time::Duration::from_millis(250)
+        } else {
+            std::time::Duration::from_millis(80)
+        };
         assert!(
-            elapsed < std::time::Duration::from_millis(80),
+            elapsed < max_elapsed,
             "2000-route miss must stay indexed, took {elapsed:?}"
         );
     }

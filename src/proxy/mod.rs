@@ -299,6 +299,7 @@ fn record_access(
         target_host: outcome.target_host,
         target_port: outcome.target_port,
         traffic: None,
+        sniff: None,
         decision: outcome.decision.map(str::to_string),
         egress: None,
         chain_member: None,

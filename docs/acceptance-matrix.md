@@ -28,6 +28,7 @@
 | HTTP absolute-form 前端 | ✅ | ✅ | ✅ | — 单请求无持久状态 | ✅ `proxy_integration` |
 | SOCKS5 前端（含 UDP ASSOCIATE） | ✅ | ✅ | ✅ | ✅ | ✅ `proxy_integration` / `socks5_udp_integration` |
 | TLS 监听（含 SNI 多证书） | ✅ | ✅ | — 无用户角色 | — 无状态写入 | ✅ `tls_sni_integration` |
+| T1 SNI 透明应用出口网关 | ✅ | ✅ | ✅ 绑定身份有效 / 未知 / 过期 | ✅ 连接配额拒绝后释放 | ✅ `sni_gateway_integration` |
 | 认证与过期校验 | ✅ | ✅ | ✅ | — 只读决策 | ✅ 经 `proxy_integration` 链路 |
 | 策略决策与规则匹配 | ✅ | ✅ | ✅ | — 只读决策 | ✅ `proxy_integration`（block/direct） |
 | 出站（direct / HTTP / SOCKS5 upstream） | ✅ | ✅ dns/dial/tls 分阶段 | ✅ | ✅ | ✅ 经 `proxy_integration` / `reverse_hop_integration` |
@@ -95,6 +96,24 @@
   验证重复域名、证书 SAN 不匹配和空名称列表均使真实进程 fail-closed 非零退出。
 - 本地 Docker 验收：`./scripts/accept-local-tls-sni.sh` 在主机 `18443` 端口验证两个 SNI
   返回各自证书，并通过两条 HTTPS 代理连接分别完成 HTTP CONNECT。
+
+### T1 SNI 透明应用出口网关
+
+- Happy Path：`tests/sni_gateway_integration.rs::sni_gateway_transparently_tunnels_allowed_sni_through_selected_egress`、
+  `sni_gateway_transparently_tunnels_allowed_sni_through_socks5_egress` 与
+  `sni_gateway_transparently_tunnels_direct_egress_on_the_listener_port` 分别以真实 TLS ClientHello 验证
+  HTTP upstream、SOCKS5 upstream 和 direct 路径均完整回放已读字节并双向传输。
+- 失败路径：`sni_gateway_rejects_unlisted_sni_and_non_tls_before_dialing_egress`、
+  `sni_gateway_rejects_unknown_or_expired_bound_identity_before_dialing` 和
+  `sni_gateway_honors_a_block_policy_before_dialing_egress` 验证白名单外、非 TLS / 无 SNI、未知或过期身份、
+  以及 `block` 均在 egress 拨号前关闭。`src/inbound/sni.rs::gateway_only_accepts_a_matched_tls_sni` 覆盖
+  ClientHello 分类的最小门槛。
+- 角色/凭据：有效 listener 绑定用户成功；未知和过期的绑定用户拒绝，见同一集成测试。
+- 限速与恢复：`sni_gateway_applies_the_bound_identity_down_rate` 验证快照 `down_rate` 生效；
+  `sni_gateway_releases_a_connection_limit_after_the_tunnel_closes` 验证超出上限拒绝，并在首条隧道关闭后释放配额。
+- 配置与审计：`src/config.rs::sni_listener_requires_a_bound_identity_and_closed_dns_origins` 拒绝空身份、空/无效/重复
+  origin 和 TLS 误配；`src/access_log.rs::pre_target_rejection_keeps_the_bounded_sniff_outcome` 验证在目标尚未确定时的
+  SNI 拒绝仍保留有界嗅探结果。
 
 ### 认证与过期校验
 

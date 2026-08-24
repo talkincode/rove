@@ -105,6 +105,15 @@ pub struct AccessLogRecord {
     pub requested_host: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub requested_port: Option<u16>,
+    /// Gateway ingress mode (`"sni"` for the transparent SNI listener). It
+    /// is absent for ordinary forward-proxy connections to retain their stable
+    /// record shape.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ingress_mode: Option<&'static str>,
+    /// Server-declared gateway origin identifier. This is never a request path,
+    /// query, header, or credential.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub origin_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sniffed_host: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -169,7 +178,9 @@ impl AccessLogRecord {
         ingress: Option<&crate::ingress::metadata::IngressMetadata>,
     ) -> Self {
         let traffic = candidate.traffic.as_ref();
-        let sniff = traffic.and_then(|identity| identity.sniff.as_ref());
+        let sniff = traffic
+            .and_then(|identity| identity.sniff.as_ref())
+            .or(candidate.sniff.as_ref());
         AccessLogRecord {
             timestamp: unix_ts(),
             node_id: node_id.to_string(),
@@ -192,6 +203,15 @@ impl AccessLogRecord {
                 .or(candidate.target_port),
             requested_host: traffic.map(|identity| identity.requested_host.clone()),
             requested_port: traffic.map(|identity| identity.requested_port),
+            ingress_mode: traffic
+                .and_then(|identity| identity.ingress_mode)
+                .or_else(|| {
+                    candidate
+                        .protocol
+                        .eq_ignore_ascii_case("sni")
+                        .then_some("sni")
+                }),
+            origin_id: traffic.and_then(|identity| identity.origin_id.clone()),
             sniffed_host: sniff.and_then(|observation| observation.host.clone()),
             sniff_protocol: sniff.and_then(|observation| observation.protocol.map(|p| p.as_str())),
             sniff_outcome: sniff.map(|observation| observation.outcome.as_str()),
@@ -820,6 +840,7 @@ mod tests {
                     },
                 ),
             ),
+            sniff: None,
             decision: Some("upstream".to_string()),
             egress: None,
             chain_member: None,
@@ -859,6 +880,27 @@ mod tests {
         assert!(!json.contains("password"));
         assert!(!json.contains("secret"));
         assert!(!json.contains("token"));
+    }
+
+    #[test]
+    fn pre_target_rejection_keeps_the_bounded_sniff_outcome() {
+        let mut rejected = candidate();
+        rejected.protocol = "sni".to_string();
+        rejected.target_host = None;
+        rejected.target_port = None;
+        rejected.traffic = None;
+        rejected.sniff = Some(crate::sniff::SniffObservation {
+            outcome: crate::sniff::SniffOutcome::Malformed,
+            protocol: None,
+            host: None,
+        });
+
+        let record = AccessLogRecord::from_candidate("edge-01", &rejected, 0, 0);
+        assert_eq!(record.target_host, None);
+        assert_eq!(record.ingress_mode, Some("sni"));
+        assert_eq!(record.sniffed_host, None);
+        assert_eq!(record.sniff_protocol, None);
+        assert_eq!(record.sniff_outcome, Some("malformed"));
     }
 
     #[test]

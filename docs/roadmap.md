@@ -17,7 +17,7 @@ client
 optional public rove-relay -- rove-ingress/1 QUIC --> NAT-side connector
   |
   v
-listeners: HTTP CONNECT / absolute-form / SOCKS5 / TUIC, optional TLS
+listeners: HTTP CONNECT / absolute-form / SOCKS5 / TUIC / T1 SNI gateway, optional TLS where applicable
   |
   v
 engine: authenticate + decide over ArcSwap snapshot
@@ -51,9 +51,12 @@ Rove 应该成为一个可以部署在边缘节点上的自包含**应用出口�
 
   `Cargo.toml` 定义 `rove` 二进制入口为 `src/main.rs`，Rust 最低版本为 1.88。当前实现使用 Tokio、rustls、reqwest、ArcSwap 等库，不依赖 GOST、gRPC、数据库或 OpenSSL 系统库。
 
-- HTTP CONNECT、absolute-form 与 SOCKS5 前端接入
+- HTTP CONNECT、absolute-form、SOCKS5 与 T1 SNI 应用出口前端接入
 
-  `src/inbound/listener.rs` 根据监听配置分发 `http` 与 `socks5` 协议，并可在监听层包裹 TLS。`src/inbound/http.rs` 支持 CONNECT 和明文 HTTP absolute-form；`src/inbound/socks5.rs` 支持用户名密码认证后的 CONNECT 与 UDP ASSOCIATE。
+  `src/inbound/listener.rs` 根据监听配置分发 `http`、`socks5` 与 TLS 透明的 `sni` 协议，并可在 HTTP/SOCKS5
+  监听层包裹 TLS。`src/inbound/http.rs` 支持 CONNECT 和明文 HTTP absolute-form；`src/inbound/socks5.rs` 支持
+  用户名密码认证后的 CONNECT 与 UDP ASSOCIATE；`src/inbound/sni.rs` 只接受服务端闭合白名单中的 ClientHello
+  SNI，绑定当前快照用户后复用 policy / egress / splice，绝不终止 TLS 或按任意名称拨号。
 
 - NAT 后反向公网入口（reverse ingress）
 
@@ -124,7 +127,7 @@ Rove 应该成为一个可以部署在边缘节点上的自包含**应用出口�
 
 - 不把节点做成「先堆协议、再补正确性」的厨房水槽。
 
-  当前可靠热路径是 HTTP CONNECT、SOCKS5 与 TUIC，它们是 listener adapter，不是产品本身。
+  当前可靠热路径是 HTTP CONNECT、SOCKS5、TUIC 与 T1 SNI 网关，它们是 listener adapter，不是产品本身。
   新的接入方式必须先证明自己服务的是应用入口，并且有独立的认证命名空间、fail-closed
   失败路径和 E2E，才能加到 `identity → policy → route → egress` 主干上。
   不得为了协议清单去引入消费级代理生态的协议或客户端一键配置。
@@ -229,10 +232,11 @@ Rove 应该成为一个可以部署在边缘节点上的自包含**应用出口�
   它服务哪一类应用入口、认证如何 fail-closed、对现有 HTTP/SOCKS5/TUIC 热路径是否零回归。
   消费级代理生态的协议、订阅和一键客户端配置不在范围内。
 
-- 应用出口网关：T1 SNI 透传为 MVP，T2 声明式 origin，T3 不做
+- 应用出口网关：T1 SNI 透传已交付，T2 声明式 origin，T3 不做
 
-  产品边界与术语见 **[应用出口网关](./egress-gateway.md)**。T1 复用现有 sniff / PrefixedIo /
-  splice，不终止 TLS；T2 可以做，但 origin 必须由服务端声明，绝不能来自客户端 Host / URL。
+  产品边界与术语见 **[应用出口网关](./egress-gateway.md)**。T1 已复用受限 ClientHello sniff / PrefixedIo /
+  splice，不终止 TLS，且以 listener 绑定的有效快照身份和精确 `origins` 白名单 fail-closed；T2 可以做，
+  但 origin 必须由服务端声明，绝不能来自客户端 Host / URL。
   通用反代、证书签发、后端池、WAF 不是 Rove 的事——发布内网服务走 reverse ingress / Subnetra。
   新入口不要再叫 reverse：仓库里 reverse hop 与 reverse ingress 已经各占一次。
 
@@ -260,7 +264,7 @@ Rove 应该成为一个可以部署在边缘节点上的自包含**应用出口�
 
 5. 关键路径专项验收
 
-   HTTP CONNECT、SOCKS5、TLS 监听、认证失败、账号过期、block、direct、HTTP upstream、SOCKS5 upstream、限速、快照编译、热替换、缓存热启动、控制面 304、MQTT 查询和同步指令、MQTT 拨测追踪与诊断事件会话、reverse ingress 的认证/租约/TCP/UDP/TUIC/MTU/恢复、访问日志记录与轮转保留清理，都必须有自动化验收覆盖。缺少其中任一项时，相关方向不得标记完成。
+   HTTP CONNECT、SOCKS5、TLS 监听、T1 SNI 透明网关、认证失败、账号过期、block、direct、HTTP upstream、SOCKS5 upstream、限速、快照编译、热替换、缓存热启动、控制面 304、MQTT 查询和同步指令、MQTT 拨测追踪与诊断事件会话、reverse ingress 的认证/租约/TCP/UDP/TUIC/MTU/恢复、访问日志记录与轮转保留清理，都必须有自动化验收覆盖。缺少其中任一项时，相关方向不得标记完成。
 
    如果新增 listener adapter，完成前还必须覆盖：有效凭据归属到正确用户、未知凭据保守拒绝、目标解析失败拒绝、block 命中拒绝、direct 转发成功、HTTP/SOCKS5 upstream 转发成功、过期用户拒绝、限速生效、连接数限制生效、TLS listener 配置错误拒绝启动，以及至少一次真实客户端兼容拨测。
 

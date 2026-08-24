@@ -21,6 +21,7 @@ Rove 优化的是**应用访问网络的那一跳**。
 
 - **怎么接都行**：HTTP(S) CONNECT、明文 HTTP absolute-form、SOCKS5（含 UDP）；监听上叠一层 TLS 就是 `https` / `socks5tls`，同一端口还能按 SNI 选择多张证书；还有
   TUIC v5（QUIC）前端，弱网和移动端更稳，还能隧道 UDP。
+- **应用改不了代理也能受控出站**：T1 SNI 透明网关只接受服务端精确允许的 DNS 名，绑定快照身份后复用既有策略、出口、限速和审计；TLS 全程不终止。
 - **想从哪儿出去都行**：本地直连、HTTP / SOCKS5 上游；hop 藏在 NAT 后也没关系——它主动用 QUIC 反向
   连上来注册，edge 顺着这条连接把流量送过去。
 - **入口藏在 NAT 后也能接公网**：`rove-relay` 提供经过授权的动态 TCP/UDP 端口，Rove 主动拨出；
@@ -249,7 +250,7 @@ docker run -d --name rove -p 8080:8080 \
   （源码在 [`docs/`](./docs/)，mdBook 构建）
 - [最佳实践场景](https://rove.talkincode.net/best-practices.html) ·
   [rove-addrbook](https://rove.talkincode.net/addrbook-format.html) ·
-  [应用出口网关（规划中）](https://rove.talkincode.net/egress-gateway.html) ·
+  [应用出口网关（T1 SNI）](https://rove.talkincode.net/egress-gateway.html) ·
   [反向 hop](https://rove.talkincode.net/reverse-hop.html) ·
   [反向公网入口](https://rove.talkincode.net/reverse-ingress.html) ·
   [TUIC 前端](https://rove.talkincode.net/tuic.html) ·

@@ -104,6 +104,11 @@ httparse = "1.10.1"
 # extra resolution cost.
 quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
 
+[lints.rust]
+# cargo-llvm-cov enables this cfg while adding counter instrumentation. The
+# indexed-route performance test keeps a separate, bounded budget for that mode.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)'] }
+
 [profile.release]
 opt-level = 3
 lto = "thin"

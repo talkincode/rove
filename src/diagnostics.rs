@@ -512,6 +512,7 @@ mod tests {
             target_host: Some("example.com".to_string()),
             target_port: Some(443),
             traffic: None,
+            sniff: None,
             decision: Some("upstream".to_string()),
             egress: None,
             chain_member: None,

@@ -79,7 +79,7 @@ grace_period_secs = 30
 
 ## `[[listeners]]` 监听入口
 
-可配置任意多个。`protocol` 决定协议，是否存在 `[listeners.tls]` 决定是否升级为 TLS 变体。`socks5` 入口支持 UDP ASSOCIATE（UDP 出口经反向 hop，见 [客户端接入 · SOCKS5 UDP ASSOCIATE](./client-setup.md#socks5-udp-associate)）。
+可配置任意多个。`protocol` 可为 `http`、`socks5` 或 TLS 透明的 `sni` 应用出口网关。对 HTTP/SOCKS5，是否存在 `[listeners.tls]` 决定是否升级为 TLS 变体；`sni` 则禁止 TLS 段，因为它必须原样透传客户端 TLS。`socks5` 入口支持 UDP ASSOCIATE（UDP 出口经反向 hop，见 [客户端接入 · SOCKS5 UDP ASSOCIATE](./client-setup.md#socks5-udp-associate)）。
 
 ```toml
 # 明文 HTTP 应用入口（HTTPS 用 CONNECT；http:// 用 absolute-form）
@@ -116,18 +116,34 @@ listen = "0.0.0.0:1081"
 [listeners.tls]
 cert = "./certs/server.crt"
 key  = "./certs/server.key"
+
+# TLS-transparent application egress gateway: applications retain the original
+# DNS name and TLS SNI; DNS directs only these allowed names to this listener.
+[[listeners]]
+name     = "egress-sni"
+protocol = "sni"
+listen   = "0.0.0.0:443"
+identity = "team-agent"        # required active snapshot user
+origins  = ["api.example.com"] # exact, closed DNS-name allowlist
+
+# T1 always reads a bounded ClientHello window; enabled/mode are ignored here.
+[listeners.sniff]
+max_bytes = 16384
+timeout_ms = 500
 ```
 
 | 字段 | 说明 |
 |---|---|
 | `name` | 入口名，用于日志/统计聚合。 |
-| `protocol` | `http`（CONNECT + 明文 HTTP absolute-form）或 `socks5`（RFC1928 + 用户名密码认证）。 |
+| `protocol` | `http`（CONNECT + 明文 HTTP absolute-form）、`socks5`（RFC1928 + 用户名密码认证）或 `sni`（T1 TLS 透明应用出口网关）。 |
 | `listen` | 监听地址 `ip:port`。 |
 | `[listeners.tls].cert` / `.key` | PEM 默认证书与私钥。存在此段即在监听层包裹 TLS；客户端未发送 SNI 或名称未命中时返回这张证书。 |
 | `[[listeners.tls.certificates]]` | 可重复的 SNI 证书映射；`server_names` 是选择该 `cert` / `key` 的精确 DNS 名称列表。 |
 | `[listeners.sniff]` | 可选 TCP 首包观察；默认关闭。`observe` 只记日志；`route` 按嗅探域名选 hop / 阻断（仅 CONNECT）。 |
+| `identity` | 仅 `sni` 必填：绑定到当前快照中的用户。未知或过期用户在连接时拒绝。 |
+| `origins` | 仅 `sni` 必填：至少一个精确 DNS 名组成的本地闭合白名单；不接受 URL、IP、通配符或重复项。 |
 
-**协议与 TLS 正交**：`http` + TLS = `https`，`socks5` + TLS = `socks5tls`。四种入口任意组合。
+**协议与 TLS 正交仅适用于 HTTP/SOCKS5**：`http` + TLS = `https`，`socks5` + TLS = `socks5tls`。
 一个 TCP listener 可通过 `[[listeners.tls.certificates]]` 在同一 IP、端口和进程内按 ClientHello SNI
 选择多张证书，无需为每个域名复制 listener 或 Rove 实例。域名匹配不区分大小写，但配置项必须唯一；
 每张额外证书至少声明一个域名。空域名列表、重复域名、证书不覆盖声明域名、证书与私钥不匹配都会
@@ -141,6 +157,13 @@ HTTP CONNECT；可用 `Rove_SNI_ACCEPT_PORT` 覆盖主机端口。
 HTTP absolute-form 转发与 CONNECT 共用认证、过期、策略、连接数、限速和访问日志语义；代理会移除
 `Proxy-Authorization` 等逐跳头、把请求行改为 origin-form，并强制单请求连接关闭。它不做透明代理、
 缓存、内容改写或浏览器网关。
+
+`sni` 是[应用出口网关](./egress-gateway.md)的 T1。它不终止 TLS：在
+`sniff.max_bytes` / `sniff.timeout_ms` 的有界窗口内仅提取 ClientHello SNI，精确匹配 `origins` 后才走该
+listener 的 `identity → policy → route → egress` 链路，并回放所有已读字节。SNI 缺失、畸形、超限、
+不在白名单、绑定用户未知/过期、策略 `block` 或出口失败均直接关闭连接，绝不按任意名称拨号或回退直连。
+`listen` 的端口会作为 origin 端口；通常应把允许域名的 DNS 改写到本 listener 的 `:443`，同时保证 Rove 的
+egress DNS 仍能解析真正的 origin，避免回环。
 
 需要为精细化运营补充隧道内域名，或按嗅探域名分流时，可在任一 HTTP/SOCKS5 listener 上打开 sniff：
 

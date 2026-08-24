@@ -69,6 +69,26 @@ impl Engine {
         })
     }
 
+    /// Authorize a server-configured listener identity. Transparent listeners
+    /// such as the SNI gateway have no client credential to present, but must
+    /// still bind to a real, non-expired snapshot user before policy, limits,
+    /// or egress selection are allowed. This intentionally does *not* reuse an
+    /// empty password with [`Self::authenticate`].
+    pub fn authenticate_bound_identity(&self, username: &str) -> Result<AuthOk> {
+        let snap = self.snap.load();
+        let user = snap.user(username).ok_or(ProxyError::AuthFailed)?;
+        if let Some(exp) = user.expire {
+            if Local::now().date_naive() > exp {
+                return Err(ProxyError::Expired);
+            }
+        }
+        Ok(AuthOk {
+            up_rate: user.up_rate,
+            down_rate: user.down_rate,
+            max_connections: user.max_connections,
+        })
+    }
+
     /// Authenticate a TUIC front-end client. `uuid_bytes` is the 16-byte raw
     /// UUID from the `Authenticate` command; `token` is the 32-byte value the
     /// client derived from the TLS keying-material exporter. `exporter` computes

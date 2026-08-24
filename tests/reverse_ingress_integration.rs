@@ -94,6 +94,8 @@ ports = ["{udp_public_port}"]
                 listen: tcp_local_addr.to_string(),
                 tls: None,
                 sniff: rove::config::SniffConfig::default(),
+                identity: None,
+                origins: Vec::new(),
             }],
             &[TuicListener {
                 name: "tuic-local".into(),
@@ -167,6 +169,8 @@ async fn relay_preserves_end_to_end_tls_termination_at_rove() {
             certificates: Vec::new(),
         }),
         sniff: rove::config::SniffConfig::default(),
+        identity: None,
+        origins: Vec::new(),
     };
     let (local_shutdown_tx, local_shutdown_rx) = tokio::sync::watch::channel(false);
     let local_task = tokio::spawn(rove::inbound::listener::run_until(
@@ -437,6 +441,8 @@ ports = ["{public_tcp_port}"]
                 listen: tcp_local_addr.to_string(),
                 tls: None,
                 sniff: rove::config::SniffConfig::default(),
+                identity: None,
+                origins: Vec::new(),
             }],
             std::slice::from_ref(&tuic_listener),
         )
@@ -534,6 +540,8 @@ ports = ["{port_a}", "{port_b}"]
                 listen: "127.0.0.1:9".into(),
                 tls: None,
                 sniff: rove::config::SniffConfig::default(),
+                identity: None,
+                origins: Vec::new(),
             }],
             &[],
         )
