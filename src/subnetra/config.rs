@@ -47,11 +47,17 @@ pub struct SubnetraConfig {
     /// bounded at the ceiling) and is rejected at startup.
     #[serde(default)]
     pub mtu: Option<usize>,
+    /// Device backend: "netstack" (default userspace smoltcp) or "tun" (kernel TUN device).
+    #[serde(default = "default_device")]
+    pub device: String,
+    /// TUN device configuration (used when device = "tun").
+    #[serde(default)]
+    pub tun: TunConfig,
     /// Hub inbound proxy protocol served on the overlay: `http` or `socks5`.
-    /// Required for `mode = "hub"`, ignored for a spoke.
+    /// Required for `mode = "hub"` with `device = "netstack"`.
     #[serde(default)]
     pub proxy_protocol: String,
-    /// Hub inbound proxy port on the overlay IP. Required for `mode = "hub"`.
+    /// Hub inbound proxy port on the overlay IP. Required for `mode = "hub"` with `device = "netstack"`.
     #[serde(default)]
     pub proxy_port: u16,
     #[serde(default)]
@@ -86,6 +92,39 @@ fn default_keepalive_secs() -> u64 {
     25
 }
 
+fn default_device() -> String {
+    "netstack".to_string()
+}
+
+/// TUN device configuration options.
+#[derive(Debug, Clone, Deserialize)]
+pub struct TunConfig {
+    /// Interface name (e.g. "rove0" on Linux).
+    #[serde(default = "default_tun_name")]
+    pub name: String,
+    /// Whether Rove configures interface IP, netmask, MTU, up status, and routes.
+    /// If false, Rove attaches to an existing pre-configured persistent TUN device.
+    #[serde(default = "default_tun_manage")]
+    pub manage: bool,
+}
+
+impl Default for TunConfig {
+    fn default() -> Self {
+        Self {
+            name: default_tun_name(),
+            manage: default_tun_manage(),
+        }
+    }
+}
+
+fn default_tun_name() -> String {
+    "rove0".to_string()
+}
+
+fn default_tun_manage() -> bool {
+    true
+}
+
 /// The node role. Both roles run the identical data plane; the difference is
 /// which side of Rove's proxy engine the userspace IP stack attaches to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -102,6 +141,13 @@ impl Mode {
             other => anyhow::bail!("subnetra.mode must be \"hub\" or \"spoke\", got {other:?}"),
         }
     }
+}
+
+/// Device backend runtime configuration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Device {
+    Netstack { hub_proxy: Option<(String, u16)> },
+    Tun { name: String, manage: bool },
 }
 
 /// A validated, runtime-ready peer.
@@ -125,9 +171,7 @@ pub struct RuntimeConfig {
     pub keepalive_secs: u64,
     /// Validated inner overlay MTU, resolved to [`INNER_MTU`] when unset.
     pub mtu: usize,
-    /// Hub inbound proxy: `(protocol, port)` served on the overlay IP. `None`
-    /// for a spoke (egress-only).
-    pub hub_proxy: Option<(String, u16)>,
+    pub device: Device,
     pub peers: Vec<RuntimePeer>,
 }
 
@@ -135,6 +179,15 @@ impl RuntimeConfig {
     /// This node's own inner IPv4 address (the host part of `overlay_cidr`).
     pub fn overlay_ip(&self) -> std::net::Ipv4Addr {
         self.overlay.addr()
+    }
+
+    /// Hub inbound proxy: `(protocol, port)` served on the overlay IP in Netstack mode.
+    /// `None` for Tun device mode or spoke mode.
+    pub fn hub_proxy(&self) -> Option<&(String, u16)> {
+        match &self.device {
+            Device::Netstack { hub_proxy } => hub_proxy.as_ref(),
+            Device::Tun { .. } => None,
+        }
     }
 }
 
@@ -198,22 +251,59 @@ impl SubnetraConfig {
             }
         };
 
-        // A hub terminates overlay TCP into Rove's proxy, so it needs a protocol
-        // and port; a spoke is egress-only and ignores these.
-        let hub_proxy = if mode == Mode::Hub {
-            let proto = self.proxy_protocol.trim().to_ascii_lowercase();
-            anyhow::ensure!(
-                proto == "http" || proto == "socks5",
-                "subnetra hub requires proxy_protocol \"http\" or \"socks5\", got {:?}",
-                self.proxy_protocol
-            );
-            anyhow::ensure!(
-                self.proxy_port != 0,
-                "subnetra hub requires a non-zero proxy_port"
-            );
-            Some((proto, self.proxy_port))
-        } else {
-            None
+        // Device backend validation: netstack requires hub proxy in hub mode;
+        // tun forbids proxy_protocol/proxy_port and validates interface name.
+        let dev_type = self.device.trim().to_ascii_lowercase();
+        let device = match dev_type.as_str() {
+            "netstack" => {
+                let hub_proxy = if mode == Mode::Hub {
+                    let proto = self.proxy_protocol.trim().to_ascii_lowercase();
+                    anyhow::ensure!(
+                        proto == "http" || proto == "socks5",
+                        "subnetra hub requires proxy_protocol \"http\" or \"socks5\", got {:?}",
+                        self.proxy_protocol
+                    );
+                    anyhow::ensure!(
+                        self.proxy_port != 0,
+                        "subnetra hub requires a non-zero proxy_port"
+                    );
+                    Some((proto, self.proxy_port))
+                } else {
+                    None
+                };
+                Device::Netstack { hub_proxy }
+            }
+            "tun" => {
+                #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+                anyhow::bail!("tun device unsupported on this platform");
+
+                anyhow::ensure!(
+                    self.proxy_protocol.trim().is_empty() && self.proxy_port == 0,
+                    "subnetra.device = \"tun\" does not provide an in-process proxy listener; bind [[listeners]] to the overlay IP instead"
+                );
+                let name = self.tun.name.trim().to_string();
+                anyhow::ensure!(!name.is_empty(), "subnetra.tun.name cannot be empty");
+                anyhow::ensure!(
+                    name.len() <= 15,
+                    "subnetra.tun.name {:?} exceeds 15 bytes",
+                    name
+                );
+                anyhow::ensure!(
+                    !name
+                        .chars()
+                        .any(|c| c.is_whitespace() || c == '/' || c == '\0'),
+                    "subnetra.tun.name {:?} contains invalid characters",
+                    name
+                );
+                Device::Tun {
+                    name,
+                    manage: self.tun.manage,
+                }
+            }
+            _ => anyhow::bail!(
+                "subnetra.device must be \"netstack\" or \"tun\", got {:?}",
+                self.device
+            ),
         };
 
         let mut peers = Vec::with_capacity(self.peers.len());
@@ -282,7 +372,7 @@ impl SubnetraConfig {
             obfuscate: self.obfuscate,
             keepalive_secs: self.keepalive_secs,
             mtu,
-            hub_proxy,
+            device,
             peers,
         })
     }
@@ -296,6 +386,8 @@ mod tests {
         SubnetraConfig {
             enable: true,
             mode: "hub".into(),
+            device: "netstack".into(),
+            tun: TunConfig::default(),
             local_id: 1,
             listen: "0.0.0.0:18020".into(),
             overlay_cidr: "10.0.0.1/24".into(),
@@ -397,6 +489,62 @@ mod tests {
     fn rejects_unknown_mode() {
         let mut c = base();
         c.mode = "relay".into();
+        assert!(c.to_runtime().is_err());
+    }
+
+    #[test]
+    fn tun_device_lowers_valid() {
+        let mut c = base();
+        c.device = "tun".into();
+        c.tun.name = "rove0".into();
+        c.tun.manage = true;
+        c.proxy_protocol = String::new();
+        c.proxy_port = 0;
+        let rt = c.to_runtime().unwrap();
+        assert_eq!(
+            rt.device,
+            Device::Tun {
+                name: "rove0".into(),
+                manage: true,
+            }
+        );
+        assert!(rt.hub_proxy().is_none());
+    }
+
+    #[test]
+    fn tun_device_rejects_hub_proxy() {
+        let mut c = base();
+        c.device = "tun".into();
+        // proxy_protocol and proxy_port still set from base()
+        assert!(c.to_runtime().is_err());
+    }
+
+    #[test]
+    fn tun_device_rejects_invalid_name() {
+        let mut c = base();
+        c.device = "tun".into();
+        c.proxy_protocol = String::new();
+        c.proxy_port = 0;
+
+        // Empty name
+        c.tun.name = "".into();
+        assert!(c.to_runtime().is_err());
+
+        // Name too long (> 15 chars)
+        c.tun.name = "verylongdevicename123".into();
+        assert!(c.to_runtime().is_err());
+
+        // Name with invalid chars
+        c.tun.name = "rove 0".into();
+        assert!(c.to_runtime().is_err());
+        c.tun.name = "rove/0".into();
+        assert!(c.to_runtime().is_err());
+    }
+
+    #[test]
+    fn rejects_unknown_device() {
+        let mut c = base();
+        c.device = "tap".into();
         assert!(c.to_runtime().is_err());
     }
 }

@@ -307,6 +307,8 @@ mod tests {
         let hub_cfg = SubnetraConfig {
             enable: true,
             mode: "hub".into(),
+            device: "netstack".into(),
+            tun: crate::subnetra::config::TunConfig::default(),
             local_id: 1,
             listen: "127.0.0.1:0".into(),
             overlay_cidr: "10.0.0.1/24".into(),
@@ -331,6 +333,8 @@ mod tests {
         let spoke_cfg = SubnetraConfig {
             enable: true,
             mode: "spoke".into(),
+            device: "netstack".into(),
+            tun: crate::subnetra::config::TunConfig::default(),
             local_id: 2,
             listen: "127.0.0.1:0".into(),
             overlay_cidr: "10.0.0.2/24".into(),
@@ -375,6 +379,8 @@ mod tests {
         let cfg = SubnetraConfig {
             enable: true,
             mode: "hub".into(),
+            device: "netstack".into(),
+            tun: crate::subnetra::config::TunConfig::default(),
             local_id: 1,
             listen: "127.0.0.1:0".into(),
             overlay_cidr: "10.0.0.1/24".into(),

@@ -111,6 +111,26 @@ async fn run_daemon(cfg_path: String) -> anyhow::Result<()> {
     // is disabled.
     let stats = rove::stats::TrafficStats::new();
 
+    // In Subnetra TUN device mode, bring up the kernel interface before binding
+    // listeners so listeners can bind to the overlay IP (e.g. 10.0.0.1:8080).
+    let subnetra_is_tun = subnetra_cfg
+        .as_ref()
+        .map(|s| s.enable && s.device.trim().eq_ignore_ascii_case("tun"))
+        .unwrap_or(false);
+    let mut tun_task: Option<tokio::task::JoinHandle<()>> = None;
+    if let Some(sn) = subnetra_cfg
+        .as_ref()
+        .filter(|s| s.enable && subnetra_is_tun)
+    {
+        let tun_svc = rove::subnetra::service::start_tun(sn, shutdown_rx.clone()).await?;
+        info!(
+            ifname = %tun_svc.ifname,
+            bound = %tun_svc.bound,
+            "subnetra tun data plane ready"
+        );
+        tun_task = Some(tun_svc.task);
+    }
+
     // Bind every explicitly configured data-plane listener before background
     // services start. A bad address, certificate, key, or protocol is a startup
     // failure rather than a silently missing ingress.
@@ -163,6 +183,14 @@ async fn run_daemon(cfg_path: String) -> anyhow::Result<()> {
     }
 
     let mut services = JoinSet::new();
+
+    if let Some(task) = tun_task {
+        services.spawn(async move {
+            if let Err(e) = task.await {
+                error!(error = %e, "subnetra tun task ended unexpectedly");
+            }
+        });
+    }
 
     if health_cfg.enable {
         let server = rove::health::HealthServer::bind(&health_cfg, runtime_health.clone()).await?;
@@ -222,7 +250,10 @@ async fn run_daemon(cfg_path: String) -> anyhow::Result<()> {
     // dead tunnel. The returned handle is installed in the explicit egress
     // context shared by all front-end listeners.
     let mut subnetra_accept_task: Option<JoinHandle<()>> = None;
-    let subnetra_egress = if let Some(sn) = subnetra_cfg.as_ref().filter(|s| s.enable) {
+    let subnetra_egress = if let Some(sn) = subnetra_cfg
+        .as_ref()
+        .filter(|s| s.enable && !subnetra_is_tun)
+    {
         let (handle, addr, accept_task) = rove::subnetra::service::start_until(
             sn,
             engine.clone(),
@@ -240,7 +271,8 @@ async fn run_daemon(cfg_path: String) -> anyhow::Result<()> {
     } else {
         None
     };
-    let egress = rove::outbound::EgressContext::new(reverse.clone(), subnetra_egress);
+    let egress = rove::outbound::EgressContext::new(reverse.clone(), subnetra_egress)
+        .with_subnetra_tun(subnetra_is_tun);
 
     let (listener_failure_tx, mut listener_failure_rx) =
         tokio::sync::mpsc::unbounded_channel::<anyhow::Error>();

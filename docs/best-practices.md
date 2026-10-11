@@ -228,7 +228,7 @@ flowchart LR
 
 ### 摆法 B：网段完全零入站（连 UDP 也不给开）
 
-角色对调：edge 作 **hub**（公网 UDP 监听），网段内放一个**原版 Zig spoke**（有 TUN）主动拨出。
+角色对调：edge 作 **hub**（公网 UDP 监听），网段内放一个带 TUN 的 spoke（可使用 `rove-hop --subnetra-config` 或原版 Zig spoke）主动拨出。
 edge 的 `subnetra` 出口拨 spoke 的 overlay IP，就是那台机器 TUN 上的 OS 服务。
 
 ```mermaid
@@ -236,18 +236,16 @@ flowchart LR
     C["客户端"] -->|"CONNECT 10.9.0.3:22"| E["rove edge · hub<br/>overlay 10.9.0.1"]
 
     subgraph SEG["隔离网段 · 零入站"]
-        Z["Zig spoke · TUN 10.9.0.3<br/>本机 ssh · DB · API 可直达"]
+        Z["rove-hop (TUN) / Zig spoke<br/>10.9.0.3<br/>本机 ssh · DB · API 直达"]
     end
 
     Z ==>|"UDP 出站拨 edge · keepalive 保活"| E
 ```
 
 - `kind = "subnetra"` 出口拨的是**裸 TCP**（不讲代理协议），所以「目标机器上有监听」是唯一要求：
-  Zig 节点的 TUN IP 上任何服务都能直达。
-- **Rove spoke 在 overlay 上没有任何监听**（用户态栈只在 hub 模式开代理端口），所以摆法 B 的
-  网段侧要用带 TUN 的 Zig 节点；要够 spoke 机器之外的其他机器，在它的 TUN IP 上再放一个小代理
-  （如 `rove-hop --socks5 10.9.0.3:1080`）做二跳。
-- 与 Zig 版完全线兼容（CI 逐字节 KAT 校验），老节点不改任何东西。
+  TUN 节点上的任何系统服务都能直达。
+- `rove-hop --subnetra-config` 原生支持 TUN spoke 模式；老节点也可以继续使用 Zig 版 spoke，两者字节级兼容。
+- 若还需要触达 spoke 机器之外的其他局域网机器，在 spoke 机器上同时挂一个本地代理（如 `rove-hop --socks5 10.9.0.3:1080`）做二跳即可。
 
 **两种摆法共同的注意事项**：
 
@@ -309,6 +307,155 @@ flowchart LR
 
 完整 manifest、六种数据源、CLI 退出码、资源上限和恢复语义见
 [rove-addrbook 指南](./addrbook-format.md)。
+
+---
+
+## 场景十：主机组网（SSH 互访与系统服务互通）
+
+**适用**：以公网 `rove` hub 为中心，将多台分布在不同网络的主机（如云服务器、家庭 NAS、公司工作站）组成一个 L3 扁平虚拟局域网。每台主机获得一个固定 overlay IP（如 `10.0.0.2`、`10.0.0.3`），主机之间能够直接 `ssh 10.0.0.3`、`ping` 或访问系统端口，**纯三层互通，不经过任何应用层代理**。
+
+```mermaid
+flowchart LR
+    subgraph A["主机 A（10.0.0.2）"]
+        SA["sshd :22"] --- TA["rove0 · 10.0.0.2"]
+        TA --- HA["rove-hop<br/>spoke · device=tun"]
+    end
+
+    subgraph HUB["公网中心 Hub"]
+        H["rove<br/>hub · UDP 18020<br/>reactor 快速中继"]
+        TH["rove0 · 10.0.0.1<br/>（可选 TUN）"]
+        H --- TH
+    end
+
+    subgraph B["主机 B（10.0.0.3）"]
+        SB["sshd :22"] --- TB["rove0 · 10.0.0.3"]
+        TB --- HB["rove-hop<br/>spoke · device=tun"]
+    end
+
+    HA == "UDP 加密隧道（出站拨号）" ==> H
+    HB == "UDP 加密隧道（出站拨号）" ==> H
+```
+
+### 1. 公网 Hub（`rove`）
+
+公网服务器只需放行单个 UDP 端口（如 18020）。
+- 若 hub 主机本身也需要被 SSH 访问，设 `device = "tun"`；
+- 若 hub 仅充当转发中继，保持默认 `device = "netstack"` 即可，**无需 root / CAP_NET_ADMIN 特权**，包在 reactor 层即直接转发。
+
+```toml
+# /etc/rove/hub.toml
+[subnetra]
+enable = true
+mode = "hub"
+device = "tun"                 # 或 "netstack"（纯中继无网卡）
+local_id = 1
+listen = "0.0.0.0:18020"       # 公网放行此 UDP 端口
+overlay_cidr = "10.0.0.1/24"
+obfuscate = true
+keepalive_secs = 25
+mtu = 1400
+
+[subnetra.tun]
+name = "rove0"
+manage = true
+
+[[subnetra.peers]]
+id = 2
+psk = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+allowed_src = "10.0.0.2/32"
+name = "spoke-a"
+
+[[subnetra.peers]]
+id = 3
+psk = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+allowed_src = "10.0.0.3/32"
+name = "spoke-b"
+```
+
+### 2. 主机 A（`rove-hop`，10.0.0.2）
+
+主机 A 运行轻量级 spoke agent `rove-hop`，强制使用 `--subnetra-config` 避免 PSK 泄露在命令行：
+
+```toml
+# /etc/rove/mesh.toml
+[subnetra]
+enable = true
+mode = "spoke"
+device = "tun"
+local_id = 2
+listen = "0.0.0.0:0"           # 临时出站端口
+overlay_cidr = "10.0.0.2/24"
+obfuscate = true
+keepalive_secs = 25
+mtu = 1400
+
+[subnetra.tun]
+name = "rove0"
+manage = true
+
+[[subnetra.peers]]
+id = 1
+psk = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+allowed_src = "10.0.0.0/24"    # 整个子网由 hub 中继
+endpoint = "203.0.113.10:18020"
+name = "hub"
+```
+
+启动命令：
+```bash
+sudo rove-hop --subnetra-config /etc/rove/mesh.toml
+```
+
+### 3. 主机 B（`rove-hop`，10.0.0.3）
+
+主机 B 配置与 A 对应，使用与 hub 约定的链路 PSK：
+
+```toml
+# /etc/rove/mesh.toml
+[subnetra]
+enable = true
+mode = "spoke"
+device = "tun"
+local_id = 3
+listen = "0.0.0.0:0"
+overlay_cidr = "10.0.0.3/24"
+obfuscate = true
+keepalive_secs = 25
+mtu = 1400
+
+[subnetra.tun]
+name = "rove0"
+manage = true
+
+[[subnetra.peers]]
+id = 1
+psk = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+allowed_src = "10.0.0.0/24"
+endpoint = "203.0.113.10:18020"
+name = "hub"
+```
+
+启动命令：
+```bash
+sudo rove-hop --subnetra-config /etc/rove/mesh.toml
+```
+
+### 4. 验证与互访
+
+两端启动后，网卡 `rove0` 自动就绪，路由表自动包含 `10.0.0.0/24 dev rove0`：
+
+```bash
+# 在主机 A 上执行：
+ping 10.0.0.3
+ssh user@10.0.0.3
+
+# 在主机 B 上执行：
+ping 10.0.0.2
+ssh user@10.0.0.2
+```
+
+> [!TIP]
+> **防火墙建议**：TUN 设备直接暴露操作系统端口。在 Linux 主机上，建议用 `iptables -A INPUT -i rove0 -p tcp --dport 22 -j ACCEPT` 与 `iptables -A INPUT -i rove0 -j DROP` 仅放行必要服务。
 
 ---
 

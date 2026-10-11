@@ -1,30 +1,33 @@
 # 内嵌 Subnetra 组网底座
 
 Rove 原生实现了 [Subnetra](https://github.com/jamiesun/subnetra) v1 线格协议，把一层
-轻量级 Layer-3 加密组网能力直接内置进代理进程。这样就不必单独部署 subnetra 守护进程、
-不需要 TUN 设备、也不需要 `NET_ADMIN`：一套用户态 IP 栈在 overlay 上终结 TCP，直接把流量
-交给 Rove 现有的 HTTP/SOCKS 处理，或作为出口把代理流量打进隔离网段。
+轻量级 Layer-3 加密组网能力直接内置进代理进程。支持两种设备后端：
+- **`netstack`（默认，用户态 IP 栈）**：无需单独部署 subnetra 守护进程、不需要 TUN 设备、也不需要 `NET_ADMIN`。用户态 IP 栈在 overlay 上终结 TCP，直接把流量交给 Rove 现有的 HTTP/SOCKS 处理，或作为出口把代理流量打进隔离网段；
+- **`tun`（可选，内核 TUN 网卡模式）**：在操作系统中创建或绑定 TUN 虚拟网卡，将 overlay 接入系统网络栈，实现节点主机之间的纯三层互联（直接 `ssh 10.0.0.x`、`ping`、访问系统端口），无需经过应用层代理。
 
 > 与现有 Zig 版 subnetra **完全线兼容**：跨实现的 known-answer-test 向量
-> （`tests/subnetra_conformance.rs`，取自参考实现 `tests/protocol-vectors.json`）逐字节
-> 校验 Rove 的密钥派生、报文封装、混淆与收发决策，任何漂移都会让 CI 变红。现有的 subnetra
-> 节点可以不做任何改动直接连上 Rove。
+（`tests/subnetra_conformance.rs`，取自参考实现 `tests/protocol-vectors.json`）逐字节
+校验 Rove 的密钥派生、报文封装、混淆与收发决策，任何漂移都会让 CI 变红。现有的 subnetra
+节点可以不做任何改动直接连上 Rove。
 
 ## 为什么内置
 
 subnetra 单独部署当然可以，但会让 Rove 的部署叙事复杂化（两个进程、TUN、路由、权限）。
-把协议做进底座后，「一层隧道 + 在隧道上跑 http/socks」变成一条配置即可开启，运维和对外解释
-都简单得多。hub 与 spoke 共用同一份数据面，唯一区别是 `mode`。
+把协议做进底座后，「一层隧道 + 在隧道上跑 http/socks」或「轻量主机三层组网」变成一条配置即可开启，运维和对外解释
+都简单得多。hub 与 spoke 共用同一份数据面，通过 `mode` 和 `device` 灵活组合。
 
 ## 架构
 
 ```text
                  ┌─────────────────────────── Rove 进程（单二进制） ───────────────────────────┐
   现有 Zig spoke │  ┌────────────┐   inner IPv4    ┌──────────────┐   TCP 流   ┌────────────┐ │
-  ──────────────┼─▶│  UDP 反应器 │◀───────────────▶│ smoltcp 用户态│◀─────────▶│ HTTP/SOCKS │ │
+  ──────────────┼─▶│  UDP 反应器 │◀───────────────▶│ smoltcp 用户态│◀─────────▶│ HTTP/SOCKS │ │ (device = "netstack")
    (hub 角色)    │  │ 加密/防重放 │                 │   IP 栈       │           │  代理引擎  │ │
-                 │  └────────────┘                 └──────────────┘           └────────────┘ │
-                 └────────────────────────────────────────────────────────────────────────────┘
+                 │  │ 路由/中继  │                 └──────────────┘           └────────────┘ │
+                 │  │            │   inner IPv4    ┌──────────────┐                          │
+                 │  │            │◀───────────────▶│  内核 TUN    │ (device = "tun")         │
+                 │  └────────────┘                 │ rove0 / utun │                          │
+                 └─────────────────────────────────┴──────────────┴──────────────────────────┘
 ```
 
 - **UDP 反应器**（`src/subnetra/reactor.rs`）——单个 Tokio 任务独占 UDP socket 与 peer 表，
@@ -100,6 +103,87 @@ spoke 缺 endpoint、hub 缺 `proxy_protocol`/`proxy_port` 等都会在启动时
 - **时钟与 epoch**：节点启动采样一次 boot epoch（纳秒墙钟）。早于 2024-01-01 会拒绝启动
   （协议 §2.3）；跨重启时钟回拨会让对端在追上旧值前拒收——用 NTP/RTC 运维缓解，协议内不修复。
 - **仅 v1 `raw_direct`**：保留的 v2 模式（`kcp_arq` / `fec_xor`）不属于 v1 线契约，未实现。
+
+## 设备后端：netstack vs tun
+
+Subnetra 支持两种设备后端，通过 `[subnetra].device` 配置：
+
+| 特性 | `device = "netstack"`（默认） | `device = "tun"`（新增） |
+|---|---|---|
+| **定位** | 代理入口与 egress 出口 | 主机三层互通局域网（SSH、Ping、系统服务） |
+| **系统特权** | **零特权**（普通用户即可运行） | 需要 `CAP_NET_ADMIN` 或 root（或挂载预建设备） |
+| **内核网络** | 内核看不到网卡，完全在用户空间终结 TCP | 创建内核网卡（如 `rove0`），接入操作系统路由表 |
+| **服务提供方式** | 仅由 Rove 内置代理引擎处理流量 | 本机任何守护进程（`sshd`、`nginx`、`mysqld`）均可监听 |
+| **快照 egress** | 快照中 `upstream.kind = "subnetra"` | 直接由操作系统路由表转发，无需应用层快照 |
+| **平台** | 全平台（含 Linux, macOS, RouterOS 容器） | Linux（一等支持）、macOS（`utun`，二级支持） |
+
+### hub 模式的中继兼容性
+
+值得注意的是：
+- **hub 跑 `device = "netstack"` 时，依然可以为所有 `device = "tun"` 的 spoke 转发中继！**
+  因为 spoke 之间的互访流量在 hub 处的反应器（Reactor）层即完成路由与中继（relay），数据包根本不进入 hub 主机的操作系统内核。因此，hub 节点本身不需要开 `ip_forward`，不需要配置 iptables，也不需要系统特权挂载 TUN 网卡。
+- 只有当 **hub 主机本身**也需要对外暴露 SSH / 接受系统端口访问时，hub 才需要开启 `device = "tun"`。
+
+## 权限与部署说明（TUN 模式）
+
+### 1. 自动管理设备（`manage = true`，推荐）
+当 `[subnetra.tun] manage = true` 时，Rove 会自动调用内核接口创建 TUN 网卡、配置 overlay IP 与子网掩码、设置 MTU 并启动网卡（macOS 上还会自动安装点对点子网路由）。这需要网络管理特权：
+
+- **普通主机 / 虚拟机**：
+  ```bash
+  # 方式 A：sudo 运行
+  sudo rove --config /etc/rove/rove.toml
+  # 或 spoke 节点：
+  sudo rove-hop --subnetra-config /etc/rove/mesh.toml
+
+  # 方式 B：通过 setcap 赋予二进制能力（免 root）
+  sudo setcap cap_net_admin+ep /usr/local/bin/rove
+  sudo setcap cap_net_admin+ep /usr/local/bin/rove-hop
+  ```
+- **systemd 服务**：
+  在 unit 文件中配置 AmbientCapabilities：
+  ```ini
+  [Service]
+  User=rove
+  AmbientCapabilities=CAP_NET_ADMIN
+  CapabilityBoundingSet=CAP_NET_ADMIN
+  ```
+- **Docker 容器**：
+  ```bash
+  docker run -d --cap-add NET_ADMIN --device /dev/net/tun rove-image ...
+  ```
+
+### 2. 持久化设备（`manage = false`，严格免 root 运行）
+若运维策略完全禁止赋予服务进程任何系统能力，可由运维预先创建好持久化 TUN 设备并授权给运行用户：
+
+```bash
+# 1. 运维以 root 创建持久化网卡并赋予普通用户 rove
+sudo ip tuntap add dev rove0 mode tun user rove
+sudo ip addr add 10.0.0.2/24 dev rove0
+sudo ip link set rove0 mtu 1400 up
+
+# 2. Rove 以普通用户 rove 启动，配置 manage = false，直接 attach
+# [subnetra.tun]
+# name = "rove0"
+# manage = false
+```
+
+## 安全边界与防火墙建议
+
+> [!WARNING]
+> **overlay 是全扁平二层/三层网络。** 开启 TUN 模式后，mesh 内的任何节点都可以主动访问其他节点在 overlay IP 上监听的所有服务与端口。
+
+如果某台主机作为 spoke 接入了 mesh，且主机上的 `sshd` 监听在 `0.0.0.0:22`，则所有掌握有效 PSK 连入 hub 的节点均能尝试连接该主机的 SSH 端口。
+
+强烈建议在生产环境中通过主机防火墙（`nftables` / `iptables` / `ufw`）限制 `rove0` 网卡的入站流量，只放行必要端口：
+
+```bash
+# 仅允许从 overlay 网段访问 SSH (22 端口)，阻断其他入站请求
+sudo iptables -A INPUT -i rove0 -p tcp --dport 22 -j ACCEPT
+sudo iptables -A INPUT -i rove0 -p icmp -j ACCEPT # 允许 ping 排障
+sudo iptables -A INPUT -i rove0 -m state --state ESTABLISHED,RELATED -j ACCEPT
+sudo iptables -A INPUT -i rove0 -j DROP
+```
 
 ## 与现有 subnetra 混合部署
 

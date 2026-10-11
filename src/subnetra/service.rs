@@ -56,7 +56,7 @@ pub async fn start(
     Ok((handle, addr))
 }
 
-/// Start Subnetra with a process shutdown signal. Hub mode returns the task
+/// Start Subnetra Netstack mode with a process shutdown signal. Hub mode returns the task
 /// that owns the overlay accept loop so the caller can include it in draining.
 #[allow(clippy::too_many_arguments)]
 pub async fn start_until(
@@ -70,11 +70,15 @@ pub async fn start_until(
     shutdown: watch::Receiver<bool>,
 ) -> anyhow::Result<(NetHandle, std::net::SocketAddr, Option<JoinHandle<()>>)> {
     let rt = cfg.to_runtime()?;
+    anyhow::ensure!(
+        matches!(rt.device, super::config::Device::Netstack { .. }),
+        "start_until only supports subnetra.device = \"netstack\"; for tun mode use start_tun"
+    );
     let epoch = super::sample_boot_epoch()?;
     let overlay_ip = rt.overlay_ip();
     let overlay_prefix = rt.overlay.prefix_len();
     let mode = rt.mode;
-    let hub_proxy = rt.hub_proxy.clone();
+    let hub_proxy = rt.hub_proxy().cloned();
     let listen_port = hub_proxy.as_ref().map(|(_, port)| *port);
     let mtu = rt.mtu;
 
@@ -108,6 +112,86 @@ pub async fn start_until(
     };
 
     Ok((net, bound, accept_task))
+}
+
+/// Running instance of Subnetra TUN device service.
+pub struct TunService {
+    /// Bound UDP address of the Subnetra reactor.
+    pub bound: std::net::SocketAddr,
+    /// Interface name of the kernel TUN device (e.g. `rove0` on Linux, `utunN` on macOS).
+    pub ifname: String,
+    /// Atomic packet counters.
+    pub counters: Arc<super::device::PumpCounters>,
+    /// Background packet pump task handle.
+    pub task: JoinHandle<()>,
+}
+
+/// Start Subnetra in TUN device mode (`device = "tun"`).
+///
+/// Creates/attaches the kernel TUN device, binds the reactor UDP socket,
+/// and launches the packet pump.
+pub async fn start_tun(
+    cfg: &SubnetraConfig,
+    shutdown: watch::Receiver<bool>,
+) -> anyhow::Result<TunService> {
+    let rt = cfg.to_runtime()?;
+    let (name, manage) = match &rt.device {
+        super::config::Device::Tun { name, manage } => (name.as_str(), *manage),
+        super::config::Device::Netstack { .. } => {
+            anyhow::bail!("start_tun requires subnetra.device = \"tun\"");
+        }
+    };
+    let epoch = super::sample_boot_epoch()?;
+    let overlay_ip = rt.overlay_ip();
+    let overlay_net = rt.overlay;
+    let mtu = rt.mtu;
+
+    // Open TUN device first so if interface creation/attach fails (e.g. missing permissions),
+    // we fail closed immediately before binding UDP sockets.
+    let dev = super::device::tun::TunDevice::open(
+        name,
+        overlay_ip,
+        overlay_net.prefix_len(),
+        mtu,
+        manage,
+    )?;
+    let ifname = dev.name().to_string();
+    let dev = Arc::new(dev);
+
+    let (dp, inbound_rx) = reactor::spawn(rt, epoch).await?;
+    let bound = dp.local_addr();
+
+    let policy = super::device::PumpPolicy {
+        overlay_ip,
+        overlay_net,
+        mtu,
+    };
+    let counters = Arc::new(super::device::PumpCounters::default());
+    let pump_counters = counters.clone();
+
+    let task = tokio::spawn(super::device::run_pump(
+        dev,
+        dp,
+        inbound_rx,
+        policy,
+        pump_counters,
+        shutdown,
+    ));
+
+    info!(
+        ifname = %ifname,
+        overlay = %overlay_ip,
+        bound = %bound,
+        manage,
+        "subnetra tun device started"
+    );
+
+    Ok(TunService {
+        bound,
+        ifname,
+        counters,
+        task,
+    })
 }
 
 /// Serve each accepted overlay connection with Rove's HTTP/SOCKS dispatch. A

@@ -103,9 +103,10 @@ Rove 应该成为一个可以部署在边缘节点上的自包含**应用出口�
 
   `src/config.rs` 和 `config.example.toml` 表明节点配置集中在节点 ID、控制面、监听和日志等级。TLS 由监听项内的默认证书和私钥路径开启；TCP listener 还可声明额外的 SNI → 证书映射，在同一 IP:port 和单个 Rove 进程内服务多个独立证书，未知或缺失 SNI 回退默认证书。
 
-- 内嵌 Subnetra 组网底座（hub / spoke）
+- 内嵌 Subnetra 组网底座（hub / spoke，netstack / tun）
 
-  `src/subnetra/` 原生实现 Subnetra v1 线格协议，作为可插拔的轻量 Layer-3 加密隧道底座——无需单独部署守护进程、无需 TUN（规范 §1 允许用户态 IP 栈）。数据面（`crypto`/`wire`/`replay`/`session`/`peer`/`reactor`）实现 BLAKE2b-256 keyed KDF + ChaCha20-Poly1305、20 字节小端头、头部混淆、64 位滑动防重放、认证前不改状态的 epoch 前向排序、内源过滤、认证后端点学习与最长前缀路由（hub 可 relay、禁反射）；`netstack/`（smoltcp，Medium::Ip）在 overlay 上终结内层 TCP，产出 `AsyncRead`/`AsyncWrite` 流接入现有代理机制。`mode = "hub"` 在 overlay 上跑 HTTP/SOCKS 代理入口（可无 TCP 监听）；`mode = "spoke"` 作为 `upstream.kind = "subnetra"` 出口把流量打进隔离网段，fail-closed 不回落直连。与现有 Zig 版 subnetra **线兼容**，由 `tests/subnetra_conformance.rs` 对参考 KAT 向量逐字节校验。配置见 `docs/subnetra.md`。
+  `src/subnetra/` 原生实现 Subnetra v1 线格协议，作为可插拔的轻量 Layer-3 加密隧道底座——无需单独部署守护进程，提供两种设备后端：默认 `device = "netstack"`（全用户态 smoltcp 栈，零系统特权），用于在 overlay 上跑 HTTP/SOCKS 代理入口和 egress 出口；可选 `device = "tun"`（内核 TUN 网卡模式），让各主机在 overlay 上直接 SSH/Ping 互联。数据面（`crypto`/`wire`/`replay`/`session`/`peer`/`reactor`）实现 BLAKE2b-256 keyed KDF + ChaCha20-Poly1305、20 字节小端头、头部混淆、64 位滑动防重放、认证前不改状态的 epoch 前向排序、内源过滤、认证后端点学习与最长前缀路由（hub 可 relay、禁反射）；`device/`（`PacketIo` 抽象、`tun-rs` 后端与 anti-spoofing pump）与 `netstack/`（smoltcp，Medium::Ip）实现两种接入形态。`mode = "hub"` 在 overlay 上跑代理入口或纯中继；`mode = "spoke"` 可作 `upstream.kind = "subnetra"` 出口或 TUN 主机节点（配合 `rove-hop --subnetra-config`），fail-closed 不回落直连。与现有 Zig 版 subnetra **线兼容**，由 `tests/subnetra_conformance.rs` 对参考 KAT 向量逐字节校验。配置见 `docs/subnetra.md`。
+
 
 ## 非目标（铁律）
 

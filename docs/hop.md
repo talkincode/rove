@@ -87,6 +87,49 @@ Rove_HOP_REVERSE_TOKEN=REPLACE_WITH_TOKEN ./rove-hop \
 QUIC 路径 MTU，UDP 载荷字节 1200-1500）。edge 侧 `[reverse_hop]` 配置、多 edge、观测与 NAT 保活见
 [反向 hop 数据面](./reverse-hop.md)。
 
+## Subnetra 组网（TUN 模式）
+
+`rove-hop` 可以作为轻量级的 **TUN spoke 节点**，加入以 `rove` 为中心的 Subnetra 虚拟局域网。
+在此模式下，`rove-hop` 在宿主机内核创建并托管一个 TUN 设备（如 `rove0`），获取 overlay IP（如 `10.0.0.2`），
+将本机的系统端口（如 `sshd :22`、`ping`）直接暴露在 overlay 内部，与其他 spoke 主机纯三层互通，**无需经过任何应用层代理**。
+
+为了避免预共享密钥（PSK）泄露在命令行 `argv` 中，`rove-hop` 强制要求通过配置文件读取 `[subnetra]` 段：
+
+```bash
+# 启动 TUN spoke（需要 root 或 CAP_NET_ADMIN 特权）
+sudo rove-hop --subnetra-config /etc/rove/mesh.toml
+```
+
+配置文件示例（`/etc/rove/mesh.toml`）：
+
+```toml
+[subnetra]
+enable = true
+mode = "spoke"
+device = "tun"                  # rove-hop 强制要求 device = "tun"
+local_id = 2
+listen = "0.0.0.0:0"            # spoke 随机绑定出站 UDP 端口
+overlay_cidr = "10.0.0.2/24"    # 本节点的 overlay IP 与虚拟子网掩码
+obfuscate = true
+keepalive_secs = 25
+mtu = 1400
+
+[subnetra.tun]
+name = "rove0"                  # Linux 网卡名
+manage = true                   # true: 自动分配 IP、子网路由并拉起网卡
+
+[[subnetra.peers]]
+id = 1
+psk = "REPLACE_LINK_1_2_64_HEX_CHARS"
+allowed_src = "10.0.0.0/24"     # 所有 overlay 流量送往 hub 中继
+endpoint = "203.0.113.10:18020" # 公网 hub 的 UDP 监听地址
+name = "hub"
+```
+
+当仅作为 TUN spoke 节点运行时，无需配置任何 `--username`、`--password` 或入口监听参数。
+也可以与 `--socks5` / `--https` 等入口监听并存。
+
+
 ## 外网出口诊断 `doctor egress`
 
 内置一个手工诊断命令，**不启动代理监听、不连控制面**。默认从 Google、YouTube、OpenAI、Cloudflare、GitHub

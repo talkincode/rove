@@ -835,6 +835,8 @@ async fn start_overlay_http_target(
     let cfg = SubnetraConfig {
         enable: true,
         mode: "hub".into(),
+        device: "netstack".into(),
+        tun: rove::subnetra::config::TunConfig::default(),
         local_id: 1,
         listen: "127.0.0.1:0".into(),
         overlay_cidr: format!("{HUB_IP}/24"),
@@ -926,6 +928,8 @@ async fn start_hub_service(mtu: usize) -> anyhow::Result<(netstack::NetHandle, S
     let cfg = SubnetraConfig {
         enable: true,
         mode: "hub".into(),
+        device: "netstack".into(),
+        tun: rove::subnetra::config::TunConfig::default(),
         local_id: 1,
         listen: "127.0.0.1:0".into(),
         overlay_cidr: format!("{HUB_IP}/24"),
@@ -961,6 +965,8 @@ async fn start_spoke_service(
     let cfg = SubnetraConfig {
         enable: true,
         mode: "spoke".into(),
+        device: "netstack".into(),
+        tun: rove::subnetra::config::TunConfig::default(),
         local_id: 2,
         listen: "127.0.0.1:0".into(),
         overlay_cidr: format!("{SPOKE_IP}/24"),
@@ -994,6 +1000,8 @@ async fn start_spoke_net(hub_udp: SocketAddr, mtu: usize) -> anyhow::Result<nets
     let cfg = SubnetraConfig {
         enable: true,
         mode: "spoke".into(),
+        device: "netstack".into(),
+        tun: rove::subnetra::config::TunConfig::default(),
         local_id: 2,
         listen: "127.0.0.1:0".into(),
         overlay_cidr: format!("{SPOKE_IP}/24"),

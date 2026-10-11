@@ -137,3 +137,34 @@ jobs:
 
       - name: Check whitespace errors
         run: git diff --check
+
+  tun-acceptance:
+    name: Linux TUN overlay acceptance
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install "${RUST_TOOLCHAIN}" --profile minimal
+          rustup default "${RUST_TOOLCHAIN}"
+
+      - name: Cache Cargo state
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-rust-${{ env.RUST_TOOLCHAIN }}-cargo-v2-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-rust-${{ env.RUST_TOOLCHAIN }}-cargo-v2-
+
+      - name: Build binaries
+        run: cargo build --locked --bin rove --bin rove-hop
+
+      - name: Run TUN acceptance script with sudo
+        run: sudo ./scripts/accept-local-tun.sh

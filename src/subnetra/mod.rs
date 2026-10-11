@@ -17,12 +17,17 @@
 //! Both roles are the *same* data plane; hub vs. spoke is a configuration
 //! difference, not a different codec.
 //!
-//! # No TUN, all userspace
+//! # Device modes: Userspace netstack vs. Kernel TUN
 //!
 //! PROTOCOL.md §1 explicitly permits "a kernel TUN device, a userspace IP stack,
-//! or an application buffer" as the inner packet source. Rove uses a userspace IP
-//! stack, so the integration needs no `NET_ADMIN`, no TUN device, and no kernel
-//! routing changes.
+//! or an application buffer" as the inner packet source. Rove supports two backends:
+//!
+//! * **netstack (default)** — userspace smoltcp IP stack, zero-privilege, no `CAP_NET_ADMIN`,
+//!   no TUN device, terminating overlay TCP directly into Rove's proxy engine.
+//! * **tun (opt-in)** — kernel TUN device (`rove0` / `utunN`), providing host-level
+//!   bidirectional L3 networking so mesh hosts reach each other's native OS services
+//!   (e.g. `ssh 10.0.0.x`, ping, raw TCP/UDP). Requires `CAP_NET_ADMIN` or pre-created
+//!   persistent TUN devices.
 //!
 //! # Compatibility gate
 //!
@@ -34,6 +39,7 @@
 
 pub mod config;
 pub mod crypto;
+pub mod device;
 pub mod netstack;
 pub mod peer;
 pub mod reactor;

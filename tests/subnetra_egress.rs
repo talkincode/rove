@@ -24,6 +24,8 @@ async fn spawn_overlay_echo(port: u16) -> std::net::SocketAddr {
     let cfg = SubnetraConfig {
         enable: true,
         mode: "hub".into(),
+        device: "netstack".into(),
+        tun: rove::subnetra::config::TunConfig::default(),
         local_id: 1,
         listen: "127.0.0.1:0".into(),
         overlay_cidr: "10.0.0.1/24".into(),
@@ -78,6 +80,8 @@ async fn start_spoke_egress(endpoint: std::net::SocketAddr) -> rove::outbound::E
     let cfg = SubnetraConfig {
         enable: true,
         mode: "spoke".into(),
+        device: "netstack".into(),
+        tun: rove::subnetra::config::TunConfig::default(),
         local_id: 2,
         listen: "127.0.0.1:0".into(),
         overlay_cidr: "10.0.0.2/24".into(),

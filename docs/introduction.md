@@ -42,7 +42,7 @@ HTTP CONNECT、SOCKS5、TUIC 与 T1 SNI 网关都是 **listener adapter**，不�
 - **应用改不了代理也能受控出站**：T1 SNI 透明网关将服务端精确允许的 DNS 名转入同一条身份、策略、出口、限速和审计链路，不终止 TLS、不接受任意目标。
 - **想从哪儿出去都行**：本地直连、HTTP / SOCKS5 上游；hop 藏在 NAT 后也没关系——它主动用 QUIC 反向连上来注册。
 - **入口藏在 NAT 后也能接公网**：`rove-relay` 提供经过授权的动态 TCP/UDP 端口；用户 TLS 私钥仍留在 Rove。
-- **能打进隔离网段**：内嵌 Subnetra 加密 Layer-3 组网，不用 TUN、不要 `NET_ADMIN`、不用另起进程。
+- **能打进隔离网段与主机组网**：内嵌 Subnetra 加密 Layer-3 组网，默认全用户态栈零特权；可选内核 TUN 模式让主机间直接 SSH/Ping 互访。
 - **策略当场判**：账号密码 + 有效期、可复用 routing policy、有序域名/IP route、每用户限速和连接数上限，全部在内存完成。
 - **地址簿当软件发布**：`rove-abctl` 把 AWS / Azure / GCP 官方地址段和企业应用域名构建成带 SHA-256 校验的 `.rab` 地址集，规则里一句 `book:openai` 就能引用；坏数据集自动保留旧版本。
 - **控制面松耦合**：定期 HTTP 拉快照、内存热替换；拉不到就用本地缓存，断网也能启动。

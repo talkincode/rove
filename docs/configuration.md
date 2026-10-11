@@ -353,22 +353,31 @@ HTTP/SOCKS5 CONNECT 与 TUIC TCP Connect 的 `route` 模式共用同一套规则
 
 ## `[subnetra]` 内嵌组网底座（默认关闭）
 
-原生实现 Subnetra v1 加密 Layer-3 隧道，在 overlay 上跑 HTTP/SOCKS——无需单独部署守护进程、
-无需 TUN。`mode = "hub"` 接受 spoke 充当隧道内代理入口；`mode = "spoke"` 拨到 hub，把流量从
-overlay 打进隔离网段。hub / spoke 共用同一份数据面。
+原生实现 Subnetra v1 加密 Layer-3 隧道。提供两种设备后端：
+- `device = "netstack"`（默认）：全用户态 IP 栈（smoltcp），零系统特权，用于在 overlay 上跑 HTTP/SOCKS 代理入口与 egress 出口；
+- `device = "tun"`：可选的内核 TUN 设备后端，将 overlay 子网直接接入操作系统，实现主机与主机之间直接 `ssh 10.0.0.x`、`ping` 或访问系统端口，无需经过应用层代理。
+
+`mode = "hub"` 接受 spoke 充当中继与代理入口；`mode = "spoke"` 拨到 hub，接入 overlay 局域网或出口。hub / spoke 共用同一份数据面。
 
 ```toml
 [subnetra]
 enable = true
-mode = "hub"                  # "hub"（收 spoke、代理入口）| "spoke"（拨 hub、egress）
+mode = "hub"                  # "hub"（收 spoke、代理入口/中继）| "spoke"（拨 hub、egress/TUN）
+device = "netstack"           # "netstack"（默认，零特权用户态栈）| "tun"（内核 TUN 网卡主机互通）
 local_id = 1                  # 本节点 mesh id，0 < id <= 65535
 listen = "0.0.0.0:18020"      # 数据面 UDP 绑定地址（放行 UDP！）
 overlay_cidr = "10.0.0.1/24"  # 本节点 overlay 地址（主机位=inner IP，前缀=虚拟子网）
 obfuscate = true              # 头部混淆，默认开；必须全网一致，否则 fail-closed
 keepalive_secs = 25           # spoke NAT 保活间隔（秒），hub 忽略
-# mtu = 1360                   # 可选：内层 overlay MTU，范围 [576, 1452]，默认 1452（压缩隧道用）
-proxy_protocol = "http"       # 仅 hub：overlay 上服务的协议 "http" | "socks5"
-proxy_port = 8080             # 仅 hub：overlay IP 上的代理端口
+# mtu = 1360                   # 可选：内层 overlay MTU，范围 [576, 1452]，默认 1452
+proxy_protocol = "http"       # 仅 netstack hub：overlay 上服务的协议 "http" | "socks5"
+proxy_port = 8080             # 仅 netstack hub：overlay IP 上的代理端口
+
+# 仅 device = "tun" 时生效（需要 CAP_NET_ADMIN 或 root）：
+[subnetra.tun]
+name = "rove0"                # Linux TUN 网卡名；macOS 忽略由系统分配 utunN
+manage = true                 # true: 由 rove 自动分配配置 IP/子网路由/MTU/UP；
+                              # false: attach 到预先建好的持久化 TUN 设备（免 root）
 
 [[subnetra.peers]]
 id = 2
@@ -378,10 +387,9 @@ endpoint = "203.0.113.2:18020"          # hub 可留空（学习得到）；spok
 name = "bj-spoke"
 ```
 
-校验 fail-closed（psk 长度/字符、id 冲突、spoke 缺 endpoint、hub 缺 proxy 设置等启动即报错）。
-**hub 节点即便没有任何 `[[listeners]]` 也能启动**（代理入口在 overlay）。作为出口时在快照里把
-`upstream.kind` 写成 `subnetra`。`mtu` 用于让整张 mesh 适配已被压缩、路径固定的外层隧道（默认
-1452；只调本节点发包大小与通告 MSS，不改协议线格常量，与旧节点互通不受影响）。原理、拓扑与
+校验 fail-closed（psk 长度/字符、id 冲突、spoke 缺 endpoint、netstack hub 缺 proxy 设置等启动即报错）。
+**hub 节点即便没有任何 `[[listeners]]` 也能启动**（在 netstack 模式下入口在 overlay，在 TUN 模式下充当纯 L3 隧道中继与网卡节点）。作为代理出口时（netstack spoke）在快照里把
+`upstream.kind` 写成 `subnetra`；在 TUN 模式下出口直接由操作系统路由表投递进 TUN 网卡。原理、拓扑与
 注意事项见 [内嵌 Subnetra 组网底座](./subnetra.md)。
 
 ## `[dns]` 专用出口 DNS（默认关闭）

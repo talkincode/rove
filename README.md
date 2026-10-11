@@ -26,8 +26,7 @@ Rove 优化的是**应用访问网络的那一跳**。
   连上来注册，edge 顺着这条连接把流量送过去。
 - **入口藏在 NAT 后也能接公网**：`rove-relay` 提供经过授权的动态 TCP/UDP 端口，Rove 主动拨出；
   用户 TLS 私钥仍留在 Rove，真实客户端 IP 用关联 ID 进入统一日志。
-- **能打进隔离网段**：内嵌 Subnetra 加密 Layer-3 组网，不用 TUN、不要 `NET_ADMIN` 权限、不用另起
-  进程，一段配置就把代理流量送进只有内网能到的网段。
+- **能打进隔离网段与主机组网**：内嵌 Subnetra 加密 Layer-3 组网。默认全用户态栈零特权打进隔离网段；可选内核 TUN 模式（`device = "tun"`）让各主机直接 SSH/Ping 互联。
 - **策略当场判**：账号密码 + 有效期、可复用 routing policy、有序域名/IP route（命名出口 /
   直连 / 阻断）、每用户限速和连接数上限，全部在内存完成。
 - **地址簿当软件发布**：`rove-abctl` 把 AWS/Azure/GCP 官方地址段和企业应用域名等公开基础设施数据
@@ -108,10 +107,10 @@ flowchart TB
 edge 之间不共享任何状态，扩容就是多摆一台；hop 多写一个 `--reverse-quic` 参数就多注册一个入口。
 细节见 [反向 hop 数据面](https://rove.talkincode.net/reverse-hop.html)。
 
-### 场景三：Subnetra —— 不装 VPN，打进隔离网段
+### 场景三：Subnetra —— 打进隔离网段与主机组网
 
 有些服务只有内网能访问。在隔离网段里放一个 hub 节点，edge 上开一段 `[subnetra]` 配置组成加密 overlay，
-代理流量就能顺着隧道进去——不需要 TUN 设备、不需要 root、不需要额外守护进程。
+代理流量就能顺着隧道进去——默认使用用户态 IP 栈（`device = "netstack"`），不需要 TUN 设备、不需要 root、不需要额外守护进程。
 
 ```mermaid
 flowchart LR
@@ -123,9 +122,9 @@ flowchart LR
     S --> T1["内网服务<br/>公网到不了"]
 ```
 
-反过来也行：让 rove 作 hub，NAT 后的 spoke 拨上来，spoke 一侧就能顺着 overlay 用 hub 的 HTTP/SOCKS 代理。与
-[Zig 版 subnetra](https://github.com/jamiesun/subnetra) 完全线兼容（CI 里有逐字节 KAT 校验），
-老节点不改任何东西直接连。详见 [内嵌 Subnetra 组网底座](https://rove.talkincode.net/subnetra.html)。
+反过来也行：让 rove 作 hub，NAT 后的 spoke 拨上来，spoke 一侧就能顺着 overlay 用 hub 的 HTTP/SOCKS 代理。
+若需要**多主机纯三层互联（SSH、Ping 等服务）**，只需开启 `device = "tun"`（配合轻量 spoke agent `rove-hop --subnetra-config`），
+即可在各主机间直接以 overlay IP 互访，不经过任何应用层代理。与 [Zig 版 subnetra](https://github.com/jamiesun/subnetra) 完全线兼容（CI 里有逐字节 KAT 校验），老节点不改任何东西直接连。详见 [内嵌 Subnetra 组网底座](https://rove.talkincode.net/subnetra.html)。
 
 ## 📊 性能大概什么水平
 

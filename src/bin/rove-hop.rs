@@ -41,13 +41,16 @@ async fn main() -> anyhow::Result<()> {
         print_usage();
         return Ok(());
     }
-    // Reverse-only hops (no local listeners) are valid: they exist purely to
-    // dial out to one or more edges. Require at least one of the two roles.
+    // Reverse-only hops (no local listeners) and Subnetra TUN spoke agents
+    // are valid: they dial out to edges or the Subnetra hub. Require at least one role.
     let reverse_client = args.reverse_client_config()?;
     let hop_mqtt = args.mqtt_config()?;
-    if args.listeners.is_empty() && reverse_client.is_none() {
+    let subnetra_cfg = args.subnetra.clone();
+    if args.listeners.is_empty() && reverse_client.is_none() && subnetra_cfg.is_none() {
         print_usage();
-        anyhow::bail!("at least one listener or --reverse-quic edge is required");
+        anyhow::bail!(
+            "at least one listener, --reverse-quic edge, or --subnetra-config is required"
+        );
     }
 
     init_tracing(&args.log_level);
@@ -72,6 +75,7 @@ async fn main() -> anyhow::Result<()> {
     info!(
         listeners = args.listeners.len(),
         reverse_edges = reverse_client.as_ref().map(|c| c.edges.len()).unwrap_or(0),
+        subnetra_tun = subnetra_cfg.is_some(),
         username = credentials.username(),
         "rove hop proxy starting"
     );
@@ -135,8 +139,24 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
-    tokio::signal::ctrl_c().await?;
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    let mut tun_service: Option<rove::subnetra::service::TunService> = None;
+    if let Some(sn) = &subnetra_cfg {
+        let svc = rove::subnetra::service::start_tun(sn, shutdown_rx).await?;
+        info!(
+            ifname = %svc.ifname,
+            bound = %svc.bound,
+            "subnetra tun spoke running"
+        );
+        tun_service = Some(svc);
+    }
+
+    wait_for_shutdown().await?;
     info!("hop proxy shutdown signal received");
+    let _ = shutdown_tx.send(true);
+    if let Some(svc) = tun_service {
+        let _ = svc.task.await;
+    }
     Ok(())
 }
 
@@ -249,6 +269,52 @@ impl DoctorArgs {
     }
 }
 
+#[cfg(unix)]
+async fn wait_for_shutdown() -> anyhow::Result<()> {
+    use tokio::signal::unix::{signal, SignalKind};
+    let mut sigterm = signal(SignalKind::terminate())?;
+    tokio::select! {
+        r = tokio::signal::ctrl_c() => r.map_err(Into::into),
+        _ = sigterm.recv() => Ok(()),
+    }
+}
+
+#[cfg(not(unix))]
+async fn wait_for_shutdown() -> anyhow::Result<()> {
+    tokio::signal::ctrl_c().await?;
+    Ok(())
+}
+
+#[derive(serde::Deserialize)]
+struct SubnetraConfigFile {
+    subnetra: Option<rove::subnetra::config::SubnetraConfig>,
+}
+
+fn load_subnetra_config(path: &str) -> anyhow::Result<rove::subnetra::config::SubnetraConfig> {
+    let raw = std::fs::read_to_string(path)
+        .map_err(|e| anyhow::anyhow!("failed to read subnetra config {path:?}: {e}"))?;
+    let mut cfg = if let Ok(wrapper) = toml::from_str::<SubnetraConfigFile>(&raw) {
+        if let Some(sn) = wrapper.subnetra {
+            sn
+        } else {
+            toml::from_str::<rove::subnetra::config::SubnetraConfig>(&raw)
+                .map_err(|e| anyhow::anyhow!("failed to parse subnetra config {path:?}: {e}"))?
+        }
+    } else {
+        toml::from_str::<rove::subnetra::config::SubnetraConfig>(&raw)
+            .map_err(|e| anyhow::anyhow!("failed to parse subnetra config {path:?}: {e}"))?
+    };
+
+    cfg.enable = true;
+    anyhow::ensure!(
+        cfg.device.trim().eq_ignore_ascii_case("tun"),
+        "rove-hop only supports subnetra device = \"tun\", got {:?}",
+        cfg.device
+    );
+    let _ = cfg.to_runtime()?;
+    Ok(cfg)
+}
+
 #[derive(Debug)]
 struct Args {
     listeners: Vec<Listener>,
@@ -263,6 +329,7 @@ struct Args {
     reverse_global_max_streams: u32,
     reverse_default_hop_id: Option<String>,
     reverse_default_token: Option<String>,
+    subnetra: Option<rove::subnetra::config::SubnetraConfig>,
     dns_servers: Vec<String>,
     dns_protocol: String,
     dns_tls_server_name: String,
@@ -320,6 +387,7 @@ impl Args {
             reverse_global_max_streams: 0,
             reverse_default_hop_id: None,
             reverse_default_token: None,
+            subnetra: None,
             dns_servers: Vec::new(),
             dns_protocol: "udp".to_string(),
             dns_tls_server_name: String::new(),
@@ -481,6 +549,10 @@ impl Args {
                 }
                 "--access-log-syslog-tag" => {
                     parsed.access_log.syslog.tag = next_value(&mut args, &arg)?;
+                }
+                "--subnetra-config" => {
+                    let path = next_value(&mut args, &arg)?;
+                    parsed.subnetra = Some(load_subnetra_config(&path)?);
                 }
                 other => anyhow::bail!("unknown argument {other:?}"),
             }
@@ -732,6 +804,7 @@ fn print_usage() {
   rove-hop --socks5 0.0.0.0:1080
   rove-hop --https 0.0.0.0:8443 --socks5 0.0.0.0:1080 --socks5tls 0.0.0.0:1081 --tls-cert ./server.crt --tls-key ./server.key
   rove-hop --reverse-quic edge.example.com:9443 --reverse-hop-id hop-s604 --reverse-token <deployment-secret>
+  rove-hop --subnetra-config /etc/rove/mesh.toml
   rove-hop doctor egress [TARGET] [--trace] [--json]
 
 Modes:
@@ -739,7 +812,11 @@ Modes:
   --socks5 ADDR      Plain SOCKS5 proxy
   --socks5tls ADDR   SOCKS5 proxy over TLS
   --reverse-quic ADDR  Dial an edge over QUIC and serve reverse tunnels (repeatable)
+  --subnetra-config PATH  Subnetra TUN spoke mode (reads TOML file with [subnetra] section)
   doctor egress      Manual one-target outbound diagnostics; defaults to a random preset target
+
+Subnetra mesh (TUN mode spoke agent; host-to-host L3 networking):
+  --subnetra-config PATH         Path to TOML file containing [subnetra] section (keeps PSK out of argv)
 
 Reverse mode (for hops the edge cannot dial; each --reverse-quic starts a new edge session):
   --reverse-quic ADDR            Edge reverse-hop QUIC listener host:port (repeatable)
@@ -1119,5 +1196,66 @@ mod tests {
         ])
         .expect_err("non-numeric retention days should fail");
         assert!(err.to_string().contains("--access-log-retention-days"));
+    }
+
+    #[test]
+    fn parses_subnetra_config_file() {
+        let temp_dir = std::env::temp_dir();
+        let config_file = temp_dir.join(format!("test-subnetra-{}.toml", std::process::id()));
+        let toml_content = r#"
+[subnetra]
+mode = "spoke"
+device = "tun"
+local_id = 2
+listen = "0.0.0.0:0"
+overlay_cidr = "10.0.0.2/24"
+obfuscate = true
+keepalive_secs = 25
+
+[[subnetra.peers]]
+id = 1
+psk = "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+allowed_src = "10.0.0.0/24"
+endpoint = "203.0.113.10:18020"
+name = "hub"
+"#;
+        std::fs::write(&config_file, toml_content).unwrap();
+
+        let args = Args::parse(["--subnetra-config", config_file.to_str().unwrap()]).unwrap();
+        assert!(args.subnetra.is_some());
+        let sn = args.subnetra.as_ref().unwrap();
+        assert_eq!(sn.mode, "spoke");
+        assert_eq!(sn.device, "tun");
+        assert_eq!(sn.local_id, 2);
+
+        // Subnetra-only mode needs no proxy credentials
+        let creds = args.credentials_with_env(None, None).unwrap();
+        assert!(creds.uses_default());
+
+        let _ = std::fs::remove_file(config_file);
+    }
+
+    #[test]
+    fn subnetra_config_rejects_netstack_device() {
+        let temp_dir = std::env::temp_dir();
+        let config_file = temp_dir.join(format!("test-subnetra-bad-{}.toml", std::process::id()));
+        let toml_content = r#"
+[subnetra]
+mode = "spoke"
+device = "netstack"
+local_id = 2
+listen = "0.0.0.0:0"
+overlay_cidr = "10.0.0.2/24"
+peers = []
+"#;
+        std::fs::write(&config_file, toml_content).unwrap();
+
+        let err = Args::parse(["--subnetra-config", config_file.to_str().unwrap()])
+            .expect_err("netstack device on rove-hop must fail");
+        assert!(err
+            .to_string()
+            .contains("only supports subnetra device = \"tun\""));
+
+        let _ = std::fs::remove_file(config_file);
     }
 }

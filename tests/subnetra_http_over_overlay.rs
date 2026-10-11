@@ -95,6 +95,8 @@ async fn http_connect_is_proxied_over_the_subnetra_overlay() {
     let hub_cfg = SubnetraConfig {
         enable: true,
         mode: "hub".into(),
+        device: "netstack".into(),
+        tun: rove::subnetra::config::TunConfig::default(),
         local_id: 1,
         listen: "127.0.0.1:0".into(),
         overlay_cidr: "10.0.0.1/24".into(),
@@ -127,6 +129,8 @@ async fn http_connect_is_proxied_over_the_subnetra_overlay() {
     let spoke_cfg = SubnetraConfig {
         enable: true,
         mode: "spoke".into(),
+        device: "netstack".into(),
+        tun: rove::subnetra::config::TunConfig::default(),
         local_id: 2,
         listen: "127.0.0.1:0".into(),
         overlay_cidr: "10.0.0.2/24".into(),

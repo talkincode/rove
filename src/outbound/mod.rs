@@ -34,11 +34,21 @@ pub const CHAIN_TOTAL_TIMEOUT: Duration = Duration::from_secs(30);
 pub struct EgressContext {
     reverse: Option<Arc<ReverseHopManager>>,
     subnetra: Option<NetHandle>,
+    subnetra_tun: bool,
 }
 
 impl EgressContext {
     pub fn new(reverse: Option<Arc<ReverseHopManager>>, subnetra: Option<NetHandle>) -> Self {
-        Self { reverse, subnetra }
+        Self {
+            reverse,
+            subnetra,
+            subnetra_tun: false,
+        }
+    }
+
+    pub fn with_subnetra_tun(mut self, tun: bool) -> Self {
+        self.subnetra_tun = tun;
+        self
     }
 
     fn reverse(&self) -> Option<&Arc<ReverseHopManager>> {
@@ -47,6 +57,10 @@ impl EgressContext {
 
     fn subnetra(&self) -> Option<&NetHandle> {
         self.subnetra.as_ref()
+    }
+
+    fn subnetra_tun(&self) -> bool {
+        self.subnetra_tun
     }
 }
 
@@ -387,6 +401,11 @@ async fn subnetra_connect(
     port: u16,
     egress: &EgressContext,
 ) -> Result<Box<dyn IoStream>> {
+    if egress.subnetra_tun() {
+        return Err(ProxyError::Upstream(format!(
+            "subnetra egress requested for {host}:{port} but subnetra is running in TUN mode; use direct egress so kernel routes packets into the overlay"
+        )));
+    }
     let Some(net) = egress.subnetra() else {
         return Err(ProxyError::Upstream(format!(
             "subnetra egress requested for {host}:{port} but subnetra is not enabled"

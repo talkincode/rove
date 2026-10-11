@@ -45,6 +45,7 @@
 | 反向公网入口（TCP/UDP） | ✅ | ✅ | ✅ | ✅ | ✅ `reverse_ingress_integration` |
 | TUIC v5 前端 | ✅ | ✅ | ✅ | — 无状态写入 | ✅ `tuic_integration` |
 | Subnetra hub / spoke | ✅ | ✅ | ✅ 密钥即身份 | — fail-closed 即恢复语义 | ✅ `subnetra_*` 四个套件 |
+| Subnetra TUN 主机组网 | ✅ | ✅ 非法配置/越界/伪造源丢弃 | ✅ 链路 PSK + anti-spoofing | — 停机自动清理网卡 | ✅ `subnetra_tun_mesh` + `scripts/accept-local-tun.sh` |
 | 独立 hop 二进制（rove-hop） | ✅ | ✅ | ✅ | ✅ | ✅ `rove_hop_integration` |
 | hop MQTT egress doctor | ✅ | ✅ | ✅ | — 只读一次探测，无状态写入 | ✅ `hop_mqtt_integration` |
 | 优雅停机（SIGINT/SIGTERM） | ✅ | ✅ | — 无身份语义 | ✅ | ✅ `shutdown_integration` |
@@ -302,6 +303,19 @@
 - 线兼容 KAT：`tests/subnetra_conformance.rs` 全套（逐字节向量校验）
 - 压力/恢复：`tests/subnetra_netstack.rs::concurrent_connect_burst_beyond_listen_backlog_succeeds`、
   `bulk_transfer_survives_flow_control`
+
+### Subnetra TUN 主机组网
+
+- Happy Path（无需 root 根隔离）：`tests/subnetra_tun_mesh.rs::spoke_to_spoke_relay_through_hub`、
+  `tests/subnetra_tun_mesh.rs::hub_can_be_reached_in_tun_mode`、
+  `tests/subnetra_tun_mesh.rs::relay_across_netstack_hub`
+- 真实内核网卡与命名空间验收：`scripts/accept-local-tun.sh`（Linux netns 3 节点 ICMP ping、双向 TCP 数据流回环与网卡自动回收）
+- 失败路径与安全防御：`tests/subnetra_tun_mesh.rs::anti_spoofing_drops_packets_with_forged_source_ip`、
+  `tests/subnetra_tun_mesh.rs::mtu_and_off_overlay_packets_are_filtered`
+- 进程与 CLI 校验：`src/bin/rove-hop.rs::tests::parses_subnetra_config_file`、
+  `src/bin/rove-hop.rs::tests::subnetra_config_rejects_netstack_device`、
+  `src/subnetra/config.rs::tests::tun_rejects_invalid_names`
+
 
 ### 独立 hop 二进制（rove-hop）
 

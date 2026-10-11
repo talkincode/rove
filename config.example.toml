@@ -219,18 +219,23 @@ open_timeout_secs = 10       # 等待 hop 接受隧道 CONNECT 的超时；超�
 #
 # [subnetra]
 # enable = true
-# mode = "hub"                 # "hub"（收 spoke、代理入口）| "spoke"（拨 hub、egress）
+# mode = "hub"                 # "hub"（收 spoke、代理入口/中继）| "spoke"（拨 hub、egress/TUN）
+# device = "netstack"          # "netstack"（默认，零特权用户态 smoltcp 栈）| "tun"（内核 TUN 网卡主机互联）
 # local_id = 1                 # 本节点 mesh id，0 < id <= 65535，充当线上 key_id 选择器
 # listen = "0.0.0.0:18020"     # 数据面 UDP 绑定地址（放行 UDP）
 # overlay_cidr = "10.0.0.1/24" # 本节点 overlay 地址：主机位是自身 inner IP，前缀是虚拟子网
 # obfuscate = true             # 头部混淆（§3.4），默认开；必须全网一致
 # keepalive_secs = 25          # spoke NAT 保活间隔（秒），hub 忽略
 # mtu = 1360                   # 可选：内层 overlay MTU（字节），范围 [576, 1452]，默认 1452。
-#                              # 当整张 mesh 跑在已被压缩、路径固定的外层隧道里（例如载体只有
-#                              # 1360）时调小它：smoltcp 会据此下调对端 TCP MSS，密封后的外层 UDP
-#                              # 数据报就能不分片地穿过隧道。留空则用协议上限 1452。
-# proxy_protocol = "http"      # 仅 hub：overlay 上服务的协议 "http" | "socks5"
-# proxy_port = 8080            # 仅 hub：overlay IP 上的代理端口
+#                              # TUN 模式下同时作为内核网卡 MTU。
+# proxy_protocol = "http"      # 仅 netstack hub：overlay 上服务的协议 "http" | "socks5"
+# proxy_port = 8080            # 仅 netstack hub：overlay IP 上的代理端口
+#
+# [subnetra.tun]               # 仅 device = "tun" 时生效（需要 CAP_NET_ADMIN 或 root）
+# name = "rove0"               # Linux TUN 设备名；macOS 忽略由系统分配 utunN
+# manage = true                # true: 由 rove 自动分配配置 IP/子网路由/MTU/UP；
+#                              # false: attach 到预先建好的持久化 TUN 设备（免 root）
+#
 # # 每个 peer 一条目录项；psk 每条链路唯一（64 位十六进制 = 32 字节），切勿跨 peer 复用。
 # # allowed_src 既是 §5.7 内源过滤前缀，也是 §5.9 路由键。hub 侧 endpoint 可留空
 # # （从已认证流量学习）；spoke 侧必须填 hub 的可拨地址。
