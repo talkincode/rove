@@ -66,9 +66,9 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 # only (no aws-lc-rs / platform-verifier) to stay on the same crypto provider as
 # the rest of the tree; already resolved transitively via reqwest.
 quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
-# SNMP agent (src/snmp/): constant-time credential comparison now, HMAC /
-# SHA-based key localization and salts for SNMPv3 USM. Already in the tree
-# via rustls's ring backend, so this adds no new build dependency.
+# Cryptographic primitives (src/addrbook/format.rs): SHA-256 digests and
+# ChaCha20-Poly1305 AEAD for Subnetra. Already in the tree via rustls's ring
+# backend, so this adds no new build dependency.
 ring = "0.17"
 # Subnetra data plane (src/subnetra/): the wire protocol's KDF is BLAKE2b-256 in
 # *native keyed mode* (NOT HMAC), which ring does not expose. `blake2` (RustCrypto)
@@ -87,9 +87,6 @@ smoltcp = { version = "0.12", default-features = false, features = [
     "proto-ipv4",
     "socket-tcp",
 ] }
-# SNMPv3 privacy (RFC 3826): AES-128 block cipher; CFB128 mode is hand-rolled
-# in src/snmp/usm.rs and checked against NIST SP 800-38A vectors.
-aes = "0.8"
 webpki-roots = "0.26"
 base64 = "0.22"
 url = "2"

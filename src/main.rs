@@ -51,7 +51,6 @@ async fn run_daemon(cfg_path: String) -> anyhow::Result<()> {
         listeners,
         mqtt,
         access_log: access_log_cfg,
-        snmp: snmp_cfg,
         reverse_hop: reverse_hop_cfg,
         reverse_ingress: reverse_ingress_cfg,
         tuic_listeners,
@@ -107,9 +106,9 @@ async fn run_daemon(cfg_path: String) -> anyhow::Result<()> {
         data_plane_required,
     );
 
-    // Traffic counters are always on (independent of the access log) so the
-    // SNMP agent and periodic stats reports stay accurate even when JSONL
-    // access logging is disabled.
+    // Traffic counters are always on (independent of the access log) so
+    // periodic stats reports stay accurate even when JSONL access logging
+    // is disabled.
     let stats = rove::stats::TrafficStats::new();
 
     // Bind every explicitly configured data-plane listener before background
@@ -320,22 +319,6 @@ async fn run_daemon(cfg_path: String) -> anyhow::Result<()> {
         services.spawn(async move {
             if let Err(e) = rove::ingress::connector::run_until(config, ingress_shutdown).await {
                 error!(error = %e, "reverse-ingress connector stopped");
-            }
-        });
-    }
-
-    // The read-only SNMP agent runs on its own UDP task; a bind failure (or
-    // any later socket error) is logged but never stops the proxy.
-    if snmp_cfg.enable {
-        let identity = rove::snmp::AgentIdentity {
-            node_id: node_id.clone(),
-            role: rove::snmp::mib::NodeRole::Edge,
-            version: env!("CARGO_PKG_VERSION").to_string(),
-        };
-        let snmp_stats = stats.clone();
-        tokio::spawn(async move {
-            if let Err(e) = rove::snmp::run_agent(snmp_cfg, identity, snmp_stats).await {
-                error!(error = %e, "snmp agent stopped");
             }
         });
     }

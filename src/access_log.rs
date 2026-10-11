@@ -30,7 +30,7 @@
 //!   -- and flows through the same file, rotation, retention and syslog
 //!   forwarding as connection records, distinguished by `"kind":"stats"`.
 //!   The counters themselves live in the shared [`crate::stats::TrafficStats`]
-//!   registry (also feeding the SNMP agent), which this writer merely
+//!   registry, which this writer merely
 //!   snapshots; a second `"kind":"egress_stats"` line series mirrors the
 //!   egress dimension (`direct` / `upstream:<addr>`).
 

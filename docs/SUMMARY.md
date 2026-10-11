@@ -27,7 +27,6 @@
 - [TUIC 前端接入（QUIC）](./tuic.md)
 - [MQTT 运维通道](./mqtt-integration.md)
 - [访问日志](./access-log.md)
-- [SNMP 监控](./snmp-cacti.md)
 
 # 实战
 

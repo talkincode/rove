@@ -41,7 +41,6 @@
 | TCP 首包 observe-only 识别 | ✅ | ✅ | — 不涉及新凭据 | — 只读观察 | ✅ `proxy_integration` / `tuic_integration` |
 | TUIC sniff route 双候选策略 | ✅ | ✅ | ✅ requested/sniffed 身份结局 | — 只读决策 | ✅ `tuic_integration` |
 | HTTP/SOCKS5 sniff route 双候选策略 | ✅ | ✅ | ✅ requested/sniffed 身份结局 | — 只读决策 | ✅ `proxy_integration` |
-| SNMP agent（v2c + v3 USM） | ✅ | ✅ | ✅ | ✅ | ✅ `snmp_integration` |
 | 反向 hop（QUIC）+ reverse/2 UDP | ✅ | ✅ | ✅ | ✅ | ✅ `reverse_hop_integration` |
 | 反向公网入口（TCP/UDP） | ✅ | ✅ | ✅ | ✅ | ✅ `reverse_ingress_integration` |
 | TUIC v5 前端 | ✅ | ✅ | ✅ | — 无状态写入 | ✅ `tuic_integration` |
@@ -259,17 +258,6 @@
 验证 sniffed block 在任何目标拨号前拒绝；与 TUIC 共用 `decide_with_sniff` 双候选规则。
 - 配置边界：`src/config.rs::listener_sniff_accepts_route_mode`
 
-### SNMP agent（v2c + v3 USM）
-
-- Happy Path：`tests/snmp_integration.rs::getnext_walk_and_getbulk_walk_return_the_same_tree`、
-  `byte_counters_are_monotonic_as_traffic_accumulates`
-- 失败路径：`wrong_community_gets_no_answer_over_udp`、
-  `source_addresses_outside_the_allowlist_get_no_answer`、
-  `port_conflict_surfaces_as_bind_error_not_panic`（SNMP 故障不影响转发）
-- 角色：正确 vs 错误 community；v3 discovery `v3_discovery_over_udp_returns_unknown_engine_ids_report`；
-  fail-closed 校验 `src/config.rs::snmp_validate_enforces_fail_closed_rules`
-- 恢复/回滚：`src/snmp/usm.rs::engine_boots_increment_across_restarts_and_reset_on_engine_change`
-
 ### 反向 hop（QUIC）+ reverse/2 UDP relay
 
 - Happy Path：`tests/reverse_hop_integration.rs::reverse_tunnel_transfers_bytes_both_directions`、
@@ -349,9 +337,7 @@
 - Happy Path / 默认值：`src/config.rs::load_applies_defaults_and_effective_mqtt_values`、
   `load_custom_listener_mqtt_and_log_settings`
 - 失败路径：`src/config.rs::load_reports_read_and_parse_errors`、
-  `load_rejects_zero_health_and_shutdown_timeouts`、
-  `load_accepts_full_snmp_config_and_rejects_invalid_ones`、
-  `snmp_validate_enforces_fail_closed_rules`
+  `load_rejects_zero_health_and_shutdown_timeouts`
 
 ### rove-addrbook（`.rab` 地址数据集 + `book:` 规则 scheme）
 

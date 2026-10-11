@@ -1,24 +1,21 @@
-//! Shared traffic counters for both the periodic access-log stats gauge and
-//! the read-only SNMP agent (issue #61).
+//! Shared traffic counters for the periodic access-log stats gauge.
 //!
 //! Two bounded-cardinality dimensions are tracked:
 //!
 //! - **listener** — one row per configured inbound listener (fixed at process
-//!   start), matching the pre-existing access-log `"stats"` gauge lines.
+//!   start), matching the access-log `"stats"` gauge lines.
 //! - **egress** — one row per egress decision key (`"direct"` or
 //!   `"upstream:<addr>"`), bounded by the policy snapshot's upstream set.
 //!   `"block"` and pre-decision failures are intentionally *not* an egress
 //!   row: blocked connections never leave the node.
 //!
 //! Counting is always on (two relaxed atomic adds per finished connection and
-//! one guard per accepted connection) so the SNMP agent keeps working when
-//! the access log is disabled. Consumers take point-in-time snapshots; they
-//! never lock the hot path.
+//! one guard per accepted connection). Consumers take point-in-time snapshots;
+//! they never lock the hot path.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
 
 #[derive(Debug, Default)]
 struct SniffCounterSet {
@@ -64,8 +61,8 @@ impl Drop for ActiveGuard {
     }
 }
 
-/// Point-in-time copy of one entry, sorted snapshots of which feed the SNMP
-/// tables and the periodic access-log stats lines.
+/// Point-in-time copy of one entry, sorted snapshots of which feed the
+/// periodic access-log stats lines.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StatsRow {
     pub name: String,
@@ -95,8 +92,8 @@ impl TrafficStats {
     }
 
     /// Creates the listener row with zeroed counters if absent. Called at
-    /// bind time so pollers (SNMP walkers, Cacti discovery) see every
-    /// configured listener before its first connection.
+    /// bind time so callers see every configured listener before its first
+    /// connection.
     pub fn register_listener(&self, listener: &str) {
         Self::entry(&self.listeners, listener);
         Self::sniff_entry(&self.sniff, listener);
@@ -228,31 +225,6 @@ impl TrafficStats {
     }
 }
 
-/// Wall-clock-independent process uptime, shared by SNMP `sysUpTime` and the
-/// v3 USM engine time. Constructed once at startup next to [`TrafficStats`].
-#[derive(Debug, Clone, Copy)]
-pub struct StartClock {
-    started: Instant,
-}
-
-impl StartClock {
-    pub fn now() -> Self {
-        StartClock {
-            started: Instant::now(),
-        }
-    }
-
-    pub fn uptime_secs(&self) -> u64 {
-        self.started.elapsed().as_secs()
-    }
-
-    /// SNMP TimeTicks are hundredths of a second, truncated to 32 bits with
-    /// wraparound as the protocol prescribes.
-    pub fn uptime_ticks(&self) -> u32 {
-        (self.started.elapsed().as_millis() / 10) as u32
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -316,7 +288,7 @@ mod tests {
     }
 
     #[test]
-    fn rows_are_sorted_by_name_for_stable_snmp_walk_order() {
+    fn rows_are_sorted_by_name() {
         let stats = TrafficStats::new();
         stats.record_egress_bytes("upstream:b", 1, 1);
         stats.record_egress_bytes("direct", 1, 1);
@@ -352,16 +324,5 @@ mod tests {
         assert_eq!(row(&stats.egress_rows(), "direct").active, 1);
         drop(g);
         assert_eq!(row(&stats.egress_rows(), "direct").active, 0);
-    }
-
-    #[test]
-    fn start_clock_reports_monotonic_uptime() {
-        let clock = StartClock::now();
-        let first = clock.uptime_ticks();
-        std::thread::sleep(std::time::Duration::from_millis(25));
-        assert!(clock.uptime_ticks() > first);
-        // 25 ms sleep can't have crossed a full second boundary by more
-        // than one tick of the seconds counter.
-        assert!(clock.uptime_secs() <= 1);
     }
 }

@@ -25,7 +25,7 @@ pub struct Ctx {
     pub diagnostics: Option<Arc<DiagnosticRegistry>>,
     pub access_log: Option<Arc<AccessLogger>>,
     /// Always-on traffic counters (listener + egress dimensions), feeding
-    /// the periodic access-log gauge and the SNMP agent.
+    /// the periodic access-log gauge.
     pub stats: Arc<TrafficStats>,
     /// Runtime-owned optional egress capabilities. Missing capabilities fail
     /// closed when a policy selects them.

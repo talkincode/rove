@@ -3,7 +3,7 @@
 `rove-hop` 是一个**独立运行的二级出口（hop）代理**：不连控制面、不读快照、不执行策略、不限速。它的定位是
 「受控网络里的一个干净出口」—— 主节点（edge）把命中分流规则的流量转发给它，由它直连真实目标。
 
-> 它和主节点 `rove` 共用同一套访问日志与 SNMP 方案，但**没有**用户/策略/限速这些控制面能力。
+> 它和主节点 `rove` 共用同一套访问日志方案，但**没有**用户/策略/限速这些控制面能力。
 
 ## 认证
 
@@ -134,15 +134,6 @@ hop 与主节点访问日志方案完全一致（默认开启、按天轮转、�
 `--access-log-disable`、`--access-log-dir`、`--access-log-file-prefix`、`--access-log-retention-days`、
 `--access-log-channel-capacity`；转发 syslog 用 `--access-log-syslog ADDR`（搭配 `--access-log-syslog-protocol`
 / `-facility` / `-tag`）。详见 [访问日志](./access-log.md)。
-
-## SNMP 监控
-
-hop 同样内置只读 SNMP agent：
-
-- 快捷开启 v2c：`--snmp-listen 0.0.0.0:161 --snmp-community <secret> --snmp-allow <cidr>`（`--snmp-allow` 可重复）。
-- 需要 SNMPv3 时：`--snmp-config snmp.toml` 引用一个只含 `[snmp]` 段的 TOML 文件，避免把 v3 口令暴露在命令行。
-
-两种方式互斥。MIB 表与 Cacti 接入见 [SNMP 监控](./snmp-cacti.md)。
 
 > 完整参数列表随时可查：`rove-hop --help`。
 

@@ -6,7 +6,7 @@ Rove 是公开项目。安全问题按「会不会把真实系统或真实人暴
 
 永远不要提交：
 
-- 节点 token、控制面 bearer、MQTT 密码、SNMP 凭证
+- 节点 token、控制面 bearer、MQTT 密码
 - 用户密码、快照缓存、真实 `node_id` / hop id
 - TLS 私钥与生产证书（`tests/fixtures/tls/` 里的假证书除外）
 - 访问日志、诊断导出、客户策略、非公开地址簿

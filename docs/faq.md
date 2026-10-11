@@ -153,14 +153,10 @@ HTTP 入口返回 `403`，SOCKS5 入口拒绝。策略 `block` 命中同样如�
 **访问日志会记密码吗？**
 永不。`decision` 携带上游地址但不含上游密码，用户密码也从不出现在日志里。
 
-**能接 Cacti / LibreNMS 吗？**
-能。内置只读 SNMP agent（v2c + v3 USM），暴露每 listener、每出口的活跃连接与累计字节。只支持
-GET/GETNEXT/GETBULK。见 [SNMP 监控](./snmp-cacti.md)。
-
 **有 `/healthz` 或 Prometheus 端点吗？**
 有可选的 `/healthz`（存活）和 `/readyz`（快照/控制面/listener 活性/排空状态）HTTP 端点，默认关闭且只监听
 `127.0.0.1:9090`；配置见 [配置详解](./configuration.md#health-存活与就绪探针默认关闭)。Prometheus
-端点仍未提供。访问日志 `kind:"stats"` 心跳和 SNMP 轮询继续用于流量与历史观测。
+端点仍未提供。访问日志 `kind:"stats"` 心跳继续用于流量与历史观测。
 
 ---
 

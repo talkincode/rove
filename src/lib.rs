@@ -20,7 +20,6 @@ pub mod resolver;
 pub mod reverse;
 pub mod snapshot_validator;
 pub mod sniff;
-pub mod snmp;
 pub mod stats;
 pub mod subnetra;
 pub mod sync;

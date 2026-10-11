@@ -99,15 +99,6 @@ curl -H "Authorization: <token>" "https://control.example.com/snapshot?since=0" 
 
 ---
 
-## SNMP 轮询不到数据
-
-- 确认 `[snmp].enable = true`，且轮询源 IP 在 `allow_cidrs` 白名单内（白名单外的包**静默丢弃**，不产生日志）。
-- v2c：`community` 要匹配。v3：用户、认证/加密协议与口令要对上；配了加密口令的用户**只接受 authPriv**。
-- 只支持 GET/GETNEXT/GETBULK；SET/TRAP/INFORM、MD5/DES 不支持。
-- SNMP 端口被占用只记一条 `error!` 日志，**代理照常服务**。见 [SNMP 监控](./snmp-cacti.md)。
-
----
-
 ## 性能 / 丢日志
 
 - 日志里出现「access log 丢弃」警告：写入队列打满。调大 `[access_log].channel_capacity`（默认 8192）。

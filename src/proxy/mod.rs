@@ -434,8 +434,8 @@ async fn serve_https<S: IoStream>(
     stream
         .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
         .await?;
-    // Hop egress is always a direct connection; the guard keeps the SNMP
-    // egress table's active gauge honest for the tunnel's lifetime.
+    // Hop egress is always a direct connection; the guard keeps the
+    // egress active gauge honest for the tunnel's lifetime.
     let _egress_guard = stats.track_egress("direct");
     let splice_result = splice(stream, outbound, 0, 0).await;
     let (result, stage, message, bytes_up, bytes_down) = match &splice_result {
@@ -641,8 +641,8 @@ async fn serve_socks5<S: IoStream>(
     let _ = outbound.set_nodelay(true);
 
     reply_socks5(&mut stream, 0x00).await?;
-    // Hop egress is always a direct connection; the guard keeps the SNMP
-    // egress table's active gauge honest for the tunnel's lifetime.
+    // Hop egress is always a direct connection; the guard keeps the
+    // egress active gauge honest for the tunnel's lifetime.
     let _egress_guard = stats.track_egress("direct");
     let splice_result = splice(stream, outbound, 0, 0).await;
     let (result, stage, message, bytes_up, bytes_down) = match &splice_result {

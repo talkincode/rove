@@ -552,8 +552,8 @@ impl Default for TraceFields<'_> {
 }
 
 async fn report_trace(ctx: &Arc<Ctx>, started: Instant, peer: SocketAddr, fields: TraceFields<'_>) {
-    // Traffic counters are always on (they feed SNMP even when tracing,
-    // diagnostics and the access log are all disabled). Blocked decisions
+    // Traffic counters are always on (they feed access-log stats even when
+    // tracing and diagnostics are disabled). Blocked decisions
     // never open an egress row: nothing left the node. Chain decisions count
     // bytes under the physical member outlet, matching `track_egress`.
     ctx.stats

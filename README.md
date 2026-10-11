@@ -37,7 +37,7 @@ Rove 优化的是**应用访问网络的那一跳**。
   [`addrbook-latest`](https://github.com/talkincode/rove/releases/tag/addrbook-latest)
   。
 - **控制面松耦合**：定期 HTTP 拉快照、内存热替换；拉不到就用本地缓存，断网也能启动。
-- **看得见、管得住**：JSONL 访问日志（可转 syslog）、内置 SNMP 监控；隔离环境还能走 MQTT 下发指令。
+- **看得见、管得住**：JSONL 访问日志（可转 syslog）；隔离环境还能走 MQTT 下发指令。
 - **域名运营观测**：HTTP CONNECT、SOCKS5 CONNECT 与 TUIC TCP 可选识别 TLS SNI / HTTP Host；
   默认关闭。HTTP/SOCKS5 仅观测；TUIC 可显式启用 `route` 按域名阻断/选出口，但不改写 requested 目标。
 - **坏了就拒绝**：认证失败、账号过期、快照损坏，一律拒绝服务，绝不悄悄退化成开放代理。
@@ -63,7 +63,7 @@ flowchart LR
 ```
 
 节点只需要回答三个问题：**我是谁**（`node_id`）、**控制面在哪**（`snapshot_url` + `token`）、
-**监听哪些口**（`[[listeners]]`）。访问日志默认开启；SNMP、MQTT、反向 hop、reverse ingress、
+**监听哪些口**（`[[listeners]]`）。访问日志默认开启；MQTT、反向 hop、reverse ingress、
 Subnetra 等管理或扩展能力默认关闭，用到再开。
 
 ## 🗺 三个典型场景

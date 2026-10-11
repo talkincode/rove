@@ -158,28 +158,6 @@ channel_capacity = 256      # 事件发布缓冲；满时丢弃并计数，绝�
 [mqtt.tls]
 enable = false
 
-# 内置只读 SNMP agent（默认关闭），供 Cacti / LibreNMS 等标准 NMS 轮询
-# 每个 listener 与每个出口（egress）维度的流量计数器。
-# 只实现 GET / GETNEXT / GETBULK；SET / TRAP / INFORM 永不支持。
-# MIB 结构与 Cacti 接入步骤见 docs/snmp-cacti.md。
-[snmp]
-enable = false
-listen = "0.0.0.0:161"       # UDP 监听地址；<1024 端口需要相应权限
-community = ""               # SNMPv2c community；留空则 v2c 关闭（可只用 v3）
-allow_cidrs = ["127.0.0.1/32", "::1/128"]  # 来源白名单，白名单外的包直接丢弃
-state_path = "./data/snmp-state.json"      # SNMPv3 engineBoots 持久化文件
-
-# SNMPv3 USM 用户（可配多个）。仅在配置了 v3 用户时才会写 state_path。
-# 安全策略 fail-closed：用户必须有认证口令；配置了加密口令的用户
-# 只接受 authPriv 级别的请求。auth_protocol: "sha1" | "sha256"；
-# priv_protocol: "aes128"（留空表示该用户不加密）。MD5 / DES 永不支持。
-# [[snmp.v3_users]]
-# username = "cacti"
-# auth_protocol = "sha256"
-# auth_password = "change-me-auth"
-# priv_protocol = "aes128"
-# priv_password = "change-me-priv"
-
 # 反向 hop 数据面（默认关闭）。用于 hop 节点位于 NAT / 防火墙 / 私有网络后、
 # edge 无法主动拨号 hop 地址的拓扑：改为 hop 主动用 QUIC 拨到 edge 并注册，
 # edge 为每个用户连接在该 QUIC 连接上开一条独立双向流（一条流一个隧道）。

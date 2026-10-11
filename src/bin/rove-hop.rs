@@ -1,5 +1,5 @@
 use rove::access_log::AccessLogger;
-use rove::config::{AccessLogConfig, SnmpConfig, SyslogConfig};
+use rove::config::{AccessLogConfig, SyslogConfig};
 use rove::egress_diagnostic::{self, EgressDiagnosticConfig};
 use rove::hop_mqtt::{HopMqttConfig, HopMqttService};
 use rove::proxy::{self, Credentials, Listener, TlsFiles, DEFAULT_PASSWORD, DEFAULT_USERNAME};
@@ -76,8 +76,8 @@ async fn main() -> anyhow::Result<()> {
         "rove hop proxy starting"
     );
 
-    // Traffic counters are always on (independent of the access log) so SNMP
-    // and periodic stats stay accurate even when JSONL logging is disabled.
+    // Traffic counters are always on (independent of the access log) so
+    // periodic stats stay accurate even when JSONL logging is disabled.
     let stats = rove::stats::TrafficStats::new();
 
     // Shares the same structured JSONL access log as the main edge node, so
@@ -118,23 +118,6 @@ async fn main() -> anyhow::Result<()> {
             );
         }
         rove::reverse::hop::spawn(reverse_client, access_log.clone(), stats.clone());
-    }
-
-    // Same isolation contract as the edge node: the SNMP agent is one UDP
-    // task whose failures are logged and never touch the data plane.
-    if args.snmp.enable {
-        let identity = rove::snmp::AgentIdentity {
-            node_id: args.node_id.clone(),
-            role: rove::snmp::mib::NodeRole::Hop,
-            version: env!("CARGO_PKG_VERSION").to_string(),
-        };
-        let snmp_stats = stats.clone();
-        let snmp_cfg = args.snmp.clone();
-        tokio::spawn(async move {
-            if let Err(e) = rove::snmp::run_agent(snmp_cfg, identity, snmp_stats).await {
-                error!(error = %e, "snmp agent stopped");
-            }
-        });
     }
 
     // Isolated from the proxy hot path and from edge MQTT. Failures stay in
@@ -276,7 +259,6 @@ struct Args {
     password: Option<String>,
     node_id: String,
     access_log: AccessLogConfig,
-    snmp: SnmpConfig,
     reverse_edges: Vec<ReverseEdgeArg>,
     reverse_global_max_streams: u32,
     reverse_default_hop_id: Option<String>,
@@ -334,7 +316,6 @@ impl Args {
                 },
                 ..AccessLogConfig::default()
             },
-            snmp: SnmpConfig::default(),
             reverse_edges: Vec::new(),
             reverse_global_max_streams: 0,
             reverse_default_hop_id: None,
@@ -356,9 +337,6 @@ impl Args {
         let mut https_listens = Vec::new();
         let mut socks5_listens = Vec::new();
         let mut socks5tls_listens = Vec::new();
-        let mut snmp_allow: Vec<String> = Vec::new();
-        let mut snmp_config_path: Option<String> = None;
-        let mut snmp_quick_flag = false;
 
         while let Some(arg) = args.next() {
             match arg.as_str() {
@@ -504,37 +482,8 @@ impl Args {
                 "--access-log-syslog-tag" => {
                     parsed.access_log.syslog.tag = next_value(&mut args, &arg)?;
                 }
-                "--snmp-listen" => {
-                    parsed.snmp.listen = next_value(&mut args, &arg)?;
-                    snmp_quick_flag = true;
-                }
-                "--snmp-community" => {
-                    parsed.snmp.community = next_value(&mut args, &arg)?;
-                    snmp_quick_flag = true;
-                }
-                "--snmp-allow" => {
-                    snmp_allow.push(next_value(&mut args, &arg)?);
-                    snmp_quick_flag = true;
-                }
-                "--snmp-config" => {
-                    snmp_config_path = Some(next_value(&mut args, &arg)?);
-                }
                 other => anyhow::bail!("unknown argument {other:?}"),
             }
-        }
-
-        if let Some(path) = snmp_config_path {
-            anyhow::ensure!(
-                !snmp_quick_flag,
-                "--snmp-config cannot be combined with --snmp-listen/--snmp-community/--snmp-allow"
-            );
-            parsed.snmp = load_snmp_config_file(&path)?;
-        } else if snmp_quick_flag {
-            parsed.snmp.enable = true;
-            if !snmp_allow.is_empty() {
-                parsed.snmp.allow_cidrs = snmp_allow;
-            }
-            parsed.snmp.validate()?;
         }
 
         if !https_listens.is_empty() || !socks5tls_listens.is_empty() {
@@ -768,26 +717,6 @@ where
     Ok(value)
 }
 
-/// Load a full `[snmp]` table from a TOML file. Used for anything beyond the
-/// quick v2c flags — notably SNMPv3 users, whose passwords must not appear in
-/// `argv`. Passing the flag is the explicit opt-in, so `enable` is implied.
-fn load_snmp_config_file(path: &str) -> anyhow::Result<SnmpConfig> {
-    #[derive(serde::Deserialize)]
-    struct SnmpConfigFile {
-        #[serde(default)]
-        snmp: SnmpConfig,
-    }
-    let text = std::fs::read_to_string(path)
-        .map_err(|e| anyhow::anyhow!("read snmp config {path}: {e}"))?;
-    let file: SnmpConfigFile =
-        toml::from_str(&text).map_err(|e| anyhow::anyhow!("parse snmp config {path}: {e}"))?;
-    let mut snmp = file.snmp;
-    snmp.enable = true;
-    snmp.validate()
-        .map_err(|e| anyhow::anyhow!("snmp config {path}: {e}"))?;
-    Ok(snmp)
-}
-
 fn init_tracing(level: &str) {
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new(format!("rove={level},warn")));
@@ -858,13 +787,6 @@ Access log (structured JSONL, on by default, same schema as the main node):
   --access-log-syslog-protocol P    udp | tcp (default: udp)
   --access-log-syslog-facility F    Syslog facility name (default: local0)
   --access-log-syslog-tag TAG       Syslog TAG field (default: rove-hop)
-
-SNMP agent (read-only, off by default; GET/GETNEXT/GETBULK only):
-  --snmp-listen ADDR      UDP listen address (default: 0.0.0.0:161; enables the agent)
-  --snmp-community S      SNMPv2c community string (enables the agent)
-  --snmp-allow CIDR       Allowed source network, repeatable (default: 127.0.0.1/32, ::1/128)
-  --snmp-config PATH      Load a full [snmp] TOML table (v2c + SNMPv3 users; keeps
-                          passwords out of argv; implies enable; exclusive with the flags above)
 "#
     );
 }
@@ -1185,97 +1107,6 @@ mod tests {
     fn access_log_disable_flag_turns_off_default_enable() {
         let args = Args::parse(["--socks5", "127.0.0.1:1080", "--access-log-disable"]).unwrap();
         assert!(!args.access_log.enable);
-    }
-
-    #[test]
-    fn snmp_is_disabled_by_default() {
-        let args = Args::parse(["--socks5", "127.0.0.1:1080"]).unwrap();
-        assert!(!args.snmp.enable);
-    }
-
-    #[test]
-    fn snmp_quick_flags_enable_v2c_agent() {
-        let args = Args::parse([
-            "--socks5",
-            "127.0.0.1:1080",
-            "--snmp-listen",
-            "127.0.0.1:1161",
-            "--snmp-community",
-            "cacti-ro",
-            "--snmp-allow",
-            "10.1.0.0/24",
-            "--snmp-allow",
-            "127.0.0.1/32",
-        ])
-        .unwrap();
-        assert!(args.snmp.enable);
-        assert_eq!(args.snmp.listen, "127.0.0.1:1161");
-        assert_eq!(args.snmp.community, "cacti-ro");
-        assert_eq!(args.snmp.allow_cidrs, vec!["10.1.0.0/24", "127.0.0.1/32"]);
-    }
-
-    #[test]
-    fn snmp_quick_flags_without_community_fail_validation() {
-        let err = Args::parse([
-            "--socks5",
-            "127.0.0.1:1080",
-            "--snmp-listen",
-            "127.0.0.1:1161",
-        ])
-        .expect_err("snmp without any credential must fail");
-        assert!(err.to_string().contains("community"), "err: {err}");
-    }
-
-    #[test]
-    fn snmp_config_file_loads_full_table_and_implies_enable() {
-        let path = std::env::temp_dir().join(format!(
-            "rove-hop-snmp-{}.toml",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos()
-        ));
-        std::fs::write(
-            &path,
-            r#"
-[snmp]
-listen = "0.0.0.0:1161"
-community = "cacti-ro"
-allow_cidrs = ["192.0.2.0/24"]
-state_path = "/tmp/snmp-state.json"
-
-[[snmp.v3_users]]
-username = "cacti"
-auth_protocol = "sha1"
-auth_password = "auth-secret-1"
-"#,
-        )
-        .unwrap();
-        let args = Args::parse([
-            "--socks5",
-            "127.0.0.1:1080",
-            "--snmp-config",
-            path.to_str().unwrap(),
-        ])
-        .unwrap();
-        assert!(args.snmp.enable);
-        assert_eq!(args.snmp.listen, "0.0.0.0:1161");
-        assert_eq!(args.snmp.v3_users.len(), 1);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn snmp_config_file_conflicts_with_quick_flags() {
-        let err = Args::parse([
-            "--socks5",
-            "127.0.0.1:1080",
-            "--snmp-community",
-            "x",
-            "--snmp-config",
-            "/nonexistent.toml",
-        ])
-        .expect_err("mixing --snmp-config with quick flags must fail");
-        assert!(err.to_string().contains("--snmp-config"), "err: {err}");
     }
 
     #[test]

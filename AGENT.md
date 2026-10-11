@@ -12,7 +12,7 @@ Rove 是公开的应用网络优化器：一个轻量单体正向代理，内置
 
 - 生产或预发的 `snapshot.json`、用户密码、节点 token、控制面 URL 里的真实主机
 - TLS 私钥、ACME 账号、SSH 密钥、`.pem` / `.key` / `.p12`（测试夹具除外，且必须是专门生成的假证书）
-- 访问日志、SNMP 状态、真实客户策略、地址簿里的非公开数据
+- 访问日志、真实客户策略、地址簿里的非公开数据
 - CI / crates.io / Homebrew tap 的 token；个人 `.env`、kubeconfig、云厂商密钥
 - 内部部署清单、未脱敏的节点 ID、真实 hop token
 

@@ -46,7 +46,7 @@ HTTP CONNECT、SOCKS5、TUIC 与 T1 SNI 网关都是 **listener adapter**，不�
 - **策略当场判**：账号密码 + 有效期、可复用 routing policy、有序域名/IP route、每用户限速和连接数上限，全部在内存完成。
 - **地址簿当软件发布**：`rove-abctl` 把 AWS / Azure / GCP 官方地址段和企业应用域名构建成带 SHA-256 校验的 `.rab` 地址集，规则里一句 `book:openai` 就能引用；坏数据集自动保留旧版本。
 - **控制面松耦合**：定期 HTTP 拉快照、内存热替换；拉不到就用本地缓存，断网也能启动。
-- **看得见、管得住**：JSONL 访问日志（可转 syslog）、内置 SNMP；隔离环境还能走 MQTT 下发指令。
+- **看得见、管得住**：JSONL 访问日志（可转 syslog）；隔离环境还能走 MQTT 下发指令。
 - **坏了就拒绝**：认证失败、账号过期、快照损坏，一律拒绝服务，绝不悄悄退化成开放代理。
 
 ## 它不是什么
@@ -70,7 +70,7 @@ HTTP CONNECT、SOCKS5、TUIC 与 T1 SNI 网关都是 **listener adapter**，不�
 ```
 
 一个节点只需要回答三个问题：**我是谁**（`node_id`）、**控制面在哪**（`snapshot_url` + `token`）、
-**监听哪些口**（`[[listeners]]`）。访问日志默认开启；SNMP、MQTT、反向 hop、reverse ingress、
+**监听哪些口**（`[[listeners]]`）。访问日志默认开启；MQTT、反向 hop、reverse ingress、
 Subnetra 等管理或扩展能力默认关闭，用到再开。
 
 ---

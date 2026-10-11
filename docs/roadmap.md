@@ -99,10 +99,6 @@ Rove 应该成为一个可以部署在边缘节点上的自包含**应用出口�
 
   `src/access_log.rs` 是老版本 GOST 详细流量日志的直接替代品：每条完成的连接（成功或在任一阶段失败）落一行 `kind:"connection"` 的 JSONL，字段含客户端来源 `client_addr`、用户名、目标、决策（`decision` 携带具体上游地址如 `upstream:10.0.0.5:1080` 而非仅类别）、结果、失败阶段、字节数等；reverse ingress 流量还带 `relay_instance_id`、`tunnel_session_id` 与 `ingress_id`/`flow_id`，可和 relay JSONL 联合溯源真实 IP。日志永不包含密码或 token，独立于 `log.level` 和 MQTT。默认开启，用 `tracing-appender` 按天轮转，按文件名日期保留 7 天；热路径经有界 `mpsc` 队列非阻塞投递，队满丢弃并计数；可选转发到远程 syslog（手搓最小 RFC 3164，支持 UDP/TCP，TCP 写入带 3 秒超时以避免卡死的远程 collector 拖垃后台写入任务）。同一条流水线每 60 秒还额外写一行 `kind:"stats"` 记录，按 listener（不按用户，避免无界基数）聚合当前活跃连接数与累计/增量字节数，是老版本 Go `ObserverEvent` 周期性 stats 事件最接近的对应物，也是连接量低谷期证明进程和 listener 仍存活的心跳信号。
 
-- 内置只读 SNMP agent（v2c + v3 USM）
-
-  `src/snmp/` 内嵌一个默认关闭的只读 SNMP agent（`rove` 与 `rove-hop` 都支持），供 Cacti / LibreNMS 等标准 NMS 直接轮询：手写 BER 编解码子集，暴露标准 `system` 组与企业子树下的 `listenerTable` / `egressTable`（每监听入口、每出口的活跃连接 Gauge32 与累计上/下行字节 Counter64，由 `src/stats.rs` 在热路径原子维护）。SNMPv2c 走 community（常量时间比较）+ 来源 CIDR 白名单；SNMPv3 USM 支持 SHA-1/SHA-256 认证、AES-128-CFB 加密、密钥本地化、engineBoots 落盘和完整的 discovery/Report 流程，安全策略 fail-closed（用户必须有认证；配了加密就强制 authPriv）。只实现 GET/GETNEXT/GETBULK，SET/TRAP/INFORM、MD5/DES 永不支持；SNMP 故障（端口占用、畸形包）不影响代理转发。MIB 与 Cacti 接入见 `docs/snmp-cacti.md`。
-
 - 扁平 TOML 配置
 
   `src/config.rs` 和 `config.example.toml` 表明节点配置集中在节点 ID、控制面、监听和日志等级。TLS 由监听项内的默认证书和私钥路径开启；TCP listener 还可声明额外的 SNI → 证书映射，在同一 IP:port 和单个 Rove 进程内服务多个独立证书，未知或缺失 SNI 回退默认证书。
@@ -176,7 +172,7 @@ Rove 应该成为一个可以部署在边缘节点上的自包含**应用出口�
 
 - 补齐运行健康与可观测性：已交付主动健康探针
 
-  已交付独立、默认回环监听的 `/healthz` 与 `/readyz`：编排系统可区分进程存活、未加载快照、无活跃数据面 listener、已加载的快照/schema 版本、控制面持续不可达和停机排空；响应不包含 URL、令牌、用户密码或策略内容。显式配置的 TCP/TUIC listener 会在后台服务启动前完成绑定和 TLS 校验，失败时节点非零退出；运行期无活跃 listener 时 readiness 返回 503。网络隔离场景仍可通过 MQTT 节点状态和拨测追踪确认故障点；结构化访问日志与 `kind:"stats"`、SNMP 继续承担历史连接和流量观测。Prometheus 指标端点仍按真实需求评估。
+  已交付独立、默认回环监听的 `/healthz` 与 `/readyz`：编排系统可区分进程存活、未加载快照、无活跃数据面 listener、已加载的快照/schema 版本、控制面持续不可达和停机排空；响应不包含 URL、令牌、用户密码或策略内容。显式配置的 TCP/TUIC listener 会在后台服务启动前完成绑定和 TLS 校验，失败时节点非零退出；运行期无活跃 listener 时 readiness 返回 503。网络隔离场景仍可通过 MQTT 节点状态和拨测追踪确认故障点；结构化访问日志与 `kind:"stats"` 继续承担历史连接和流量观测。Prometheus 指标端点仍按真实需求评估。
 
 - TCP 首包运营识别：已交付 observe-only 与 HTTP/SOCKS5/TUIC route
 

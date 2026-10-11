@@ -127,7 +127,7 @@ control plane ──► MQTT broker ◄── rove (主动连接, 订阅主题)
 
 ```text
               ┌─ edge-tokyo   ─┐
-control ──────┼─ edge-sg      ─┼──► 各自 syslog / SNMP ──► 集中监控
+control ──────┼─ edge-sg      ─┼──► 各自 syslog ──► 集中监控
 (静态快照)     └─ edge-fra     ─┘
 ```
 
@@ -135,8 +135,7 @@ control ──────┼─ edge-sg      ─┼──► 各自 syslog / SN
   响应体。控制面可以用**纯静态文件 / 对象存储**提供这个接口，无需任何按节点路由的后端逻辑。
 - 个别节点要不同出口 realization（如各地本地 hop）→ 用快照的 `node_overrides.<node_id>.egresses`
   整项替换同名 egress，节点本地按自己的 `node_id` 合并；policy 保持全节点统一。
-- 观测：每节点开 [SNMP](./snmp-cacti.md) 给 Cacti/LibreNMS 轮询流量，或把 [访问日志转发 syslog](./access-log.md)
-  集中检索。`node_id` 是跨节点归集的关键维度，务必唯一稳定。
+- 观测：把 [访问日志转发 syslog](./access-log.md) 集中检索。`node_id` 是跨节点归集的关键维度，务必唯一稳定。
 
 ---
 
@@ -319,7 +318,6 @@ flowchart LR
 - [ ] hop 一律设置**非默认**凭据（不要留 `rove`/`rove`）。
 - [ ] 令牌 / 密码 / 证书私钥通过部署系统注入，**不提交进仓库**；示例只用占位符。
 - [ ] 反向 hop 令牌走**环境变量**，不进命令行 argv。
-- [ ] SNMP 配 `community` 强随机值 + 收紧 `allow_cidrs` 白名单；对外优先用 SNMPv3（authPriv）。
 - [ ] 用 systemd 加固（非 root、`NoNewPrivileges`、`ProtectSystem=strict`），低端口用 `CAP_NET_BIND_SERVICE`。
 - [ ] 访问日志保持开启，用于事后审计；确认日志/syslog 目标本身是可信通道。
 - [ ] 定期核对：策略失败（认证/过期/block/上游失败）时节点是**拒绝**而非放行。

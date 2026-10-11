@@ -23,8 +23,6 @@ pub struct Config {
     #[serde(default)]
     pub access_log: AccessLogConfig,
     #[serde(default)]
-    pub snmp: SnmpConfig,
-    #[serde(default)]
     pub reverse_hop: ReverseHopConfig,
     /// Optional NAT-side connector to a public reverse-ingress relay.
     #[serde(default)]
@@ -648,139 +646,6 @@ impl Default for SyslogConfig {
     }
 }
 
-/// Built-in read-only SNMP agent (see `src/snmp/`). Off by default; when
-/// enabled at least one credential — a v2c community or a v3 user — must be
-/// configured, plus a source allowlist that gates *all* SNMP traffic.
-#[derive(Debug, Clone, Deserialize)]
-pub struct SnmpConfig {
-    #[serde(default)]
-    pub enable: bool,
-    #[serde(default = "default_snmp_listen")]
-    pub listen: String,
-    /// v2c community. Empty string disables SNMPv2c entirely.
-    #[serde(default)]
-    pub community: String,
-    /// Source-address allowlist applied before any parsing, for both v2c and
-    /// v3. Defaults to loopback only: exposing SNMP beyond localhost must be
-    /// an explicit decision.
-    #[serde(default = "default_snmp_allow_cidrs")]
-    pub allow_cidrs: Vec<String>,
-    /// Where the SNMPv3 engine persists `snmpEngineBoots` across restarts.
-    /// Only written when v3 users are configured.
-    #[serde(default = "default_snmp_state_path")]
-    pub state_path: String,
-    #[serde(default)]
-    pub v3_users: Vec<SnmpV3UserConfig>,
-}
-
-impl Default for SnmpConfig {
-    fn default() -> Self {
-        SnmpConfig {
-            enable: false,
-            listen: default_snmp_listen(),
-            community: String::new(),
-            allow_cidrs: default_snmp_allow_cidrs(),
-            state_path: default_snmp_state_path(),
-            v3_users: Vec::new(),
-        }
-    }
-}
-
-impl SnmpConfig {
-    /// Validate an enabled SNMP configuration. Fail-closed: misconfiguration
-    /// stops startup rather than silently running an unpollable or (worse)
-    /// unexpectedly open agent.
-    pub fn validate(&self) -> anyhow::Result<()> {
-        if !self.enable {
-            return Ok(());
-        }
-        if self.community.is_empty() && self.v3_users.is_empty() {
-            anyhow::bail!(
-                "snmp.enable = true requires a v2c community or at least one [[snmp.v3_users]] entry"
-            );
-        }
-        if self.allow_cidrs.is_empty() {
-            anyhow::bail!("snmp.allow_cidrs must not be empty when SNMP is enabled");
-        }
-        for cidr in &self.allow_cidrs {
-            cidr.parse::<ipnet::IpNet>()
-                .map_err(|e| anyhow::anyhow!("snmp.allow_cidrs entry {cidr:?}: {e}"))?;
-        }
-        let mut seen = std::collections::HashSet::new();
-        for user in &self.v3_users {
-            user.validate()?;
-            if !seen.insert(user.username.as_str()) {
-                anyhow::bail!("duplicate snmp.v3_users username {:?}", user.username);
-            }
-        }
-        if !self.v3_users.is_empty() && self.state_path.is_empty() {
-            anyhow::bail!("snmp.state_path must be set when v3 users are configured");
-        }
-        Ok(())
-    }
-}
-
-/// One SNMPv3 USM user. Authentication is mandatory (noAuthNoPriv polling is
-/// not offered); privacy is optional but enforced once configured.
-#[derive(Debug, Clone, Deserialize)]
-pub struct SnmpV3UserConfig {
-    pub username: String,
-    /// `sha1` (HMAC-SHA1-96) or `sha256` (HMAC-SHA-256-192, RFC 7860).
-    pub auth_protocol: String,
-    pub auth_password: String,
-    /// Optional: `aes128` (CFB128-AES-128, RFC 3826). DES is not supported.
-    #[serde(default)]
-    pub priv_protocol: String,
-    #[serde(default)]
-    pub priv_password: String,
-}
-
-impl SnmpV3UserConfig {
-    pub fn validate(&self) -> anyhow::Result<()> {
-        if self.username.is_empty() {
-            anyhow::bail!("snmp.v3_users entry with empty username");
-        }
-        if !matches!(self.auth_protocol.as_str(), "sha1" | "sha256") {
-            anyhow::bail!(
-                "snmp v3 user {:?}: auth_protocol must be \"sha1\" or \"sha256\", got {:?}",
-                self.username,
-                self.auth_protocol
-            );
-        }
-        if self.auth_password.len() < 8 {
-            anyhow::bail!(
-                "snmp v3 user {:?}: auth_password must be at least 8 characters (RFC 3414)",
-                self.username
-            );
-        }
-        match self.priv_protocol.as_str() {
-            "" => {
-                if !self.priv_password.is_empty() {
-                    anyhow::bail!(
-                        "snmp v3 user {:?}: priv_password set without priv_protocol",
-                        self.username
-                    );
-                }
-            }
-            "aes128" => {
-                if self.priv_password.len() < 8 {
-                    anyhow::bail!(
-                        "snmp v3 user {:?}: priv_password must be at least 8 characters",
-                        self.username
-                    );
-                }
-            }
-            other => {
-                anyhow::bail!(
-                    "snmp v3 user {:?}: priv_protocol must be \"aes128\" or unset, got {other:?} (DES is not supported)",
-                    self.username
-                );
-            }
-        }
-        Ok(())
-    }
-}
-
 fn default_poll() -> u64 {
     30
 }
@@ -858,15 +723,6 @@ fn default_syslog_facility() -> String {
 }
 fn default_syslog_tag() -> String {
     "rove".to_string()
-}
-fn default_snmp_listen() -> String {
-    "0.0.0.0:161".to_string()
-}
-fn default_snmp_allow_cidrs() -> Vec<String> {
-    vec!["127.0.0.1/32".to_string(), "::1/128".to_string()]
-}
-fn default_snmp_state_path() -> String {
-    "./data/snmp-state.json".to_string()
 }
 
 /// Edge-side reverse-hop QUIC data plane (see `src/reverse/`). Off by default:
@@ -1180,7 +1036,6 @@ impl Config {
             toml::from_str(&text).map_err(|e| anyhow::anyhow!("parse config {path}: {e}"))?;
         cfg.health.validate()?;
         cfg.shutdown.validate()?;
-        cfg.snmp.validate()?;
         cfg.reverse_hop.validate()?;
         for listener in &cfg.listeners {
             listener.validate()?;
@@ -1506,12 +1361,6 @@ token = "NODE_TOKEN"
         assert_eq!(cfg.access_log.syslog.protocol, "udp");
         assert_eq!(cfg.access_log.syslog.facility, "local0");
         assert_eq!(cfg.access_log.syslog.tag, "rove");
-        assert!(!cfg.snmp.enable);
-        assert_eq!(cfg.snmp.listen, "0.0.0.0:161");
-        assert_eq!(cfg.snmp.community, "");
-        assert_eq!(cfg.snmp.allow_cidrs, vec!["127.0.0.1/32", "::1/128"]);
-        assert_eq!(cfg.snmp.state_path, "./data/snmp-state.json");
-        assert!(cfg.snmp.v3_users.is_empty());
 
         // Reverse-hop is off by default and validates trivially.
         assert!(!cfg.reverse_hop.enable);
@@ -1624,144 +1473,6 @@ grace_period_secs = 0
         let cfg = Config::load("config.example.toml").expect("example config parses");
         assert!(!cfg.reverse_hop.enable);
         assert_eq!(cfg.reverse_hop.listen, "0.0.0.0:9443");
-    }
-
-    #[test]
-    fn load_accepts_full_snmp_config_and_rejects_invalid_ones() {
-        let path = temp_path("snmp-config.toml");
-        std::fs::write(
-            &path,
-            r#"
-node_id = "edge-3"
-
-[control_plane]
-snapshot_url = "https://control.example.com/snapshot"
-token = "NODE_TOKEN"
-
-[snmp]
-enable = true
-listen = "0.0.0.0:1161"
-community = "cacti-ro"
-allow_cidrs = ["10.0.0.0/24", "127.0.0.1/32"]
-state_path = "/var/lib/rove/snmp-state.json"
-
-[[snmp.v3_users]]
-username = "cacti"
-auth_protocol = "sha256"
-auth_password = "auth-secret-1"
-priv_protocol = "aes128"
-priv_password = "priv-secret-1"
-"#,
-        )
-        .unwrap();
-        let cfg = Config::load(&path).unwrap();
-        assert!(cfg.snmp.enable);
-        assert_eq!(cfg.snmp.listen, "0.0.0.0:1161");
-        assert_eq!(cfg.snmp.community, "cacti-ro");
-        assert_eq!(cfg.snmp.v3_users.len(), 1);
-        assert_eq!(cfg.snmp.v3_users[0].username, "cacti");
-        assert_eq!(cfg.snmp.v3_users[0].priv_protocol, "aes128");
-        let _ = std::fs::remove_file(&path);
-
-        // Enabled without any credential: rejected at load time.
-        std::fs::write(
-            &path,
-            r#"
-node_id = "edge-3"
-
-[control_plane]
-snapshot_url = "https://control.example.com/snapshot"
-token = "NODE_TOKEN"
-
-[snmp]
-enable = true
-"#,
-        )
-        .unwrap();
-        let err = Config::load(&path).unwrap_err();
-        assert!(err.to_string().contains("community"), "err: {err}");
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn snmp_validate_enforces_fail_closed_rules() {
-        let valid_user = SnmpV3UserConfig {
-            username: "cacti".into(),
-            auth_protocol: "sha1".into(),
-            auth_password: "12345678".into(),
-            priv_protocol: String::new(),
-            priv_password: String::new(),
-        };
-
-        // Disabled config never validates credentials.
-        assert!(SnmpConfig::default().validate().is_ok());
-
-        let mut cfg = SnmpConfig {
-            enable: true,
-            community: "public".into(),
-            ..SnmpConfig::default()
-        };
-        assert!(cfg.validate().is_ok());
-
-        cfg.allow_cidrs = vec!["not-a-cidr".into()];
-        assert!(cfg
-            .validate()
-            .unwrap_err()
-            .to_string()
-            .contains("allow_cidrs"));
-        cfg.allow_cidrs = Vec::new();
-        assert!(cfg.validate().is_err());
-        cfg.allow_cidrs = default_snmp_allow_cidrs();
-
-        // v3-only config requires a state path.
-        cfg.community = String::new();
-        cfg.v3_users = vec![valid_user.clone()];
-        cfg.state_path = String::new();
-        assert!(cfg
-            .validate()
-            .unwrap_err()
-            .to_string()
-            .contains("state_path"));
-        cfg.state_path = default_snmp_state_path();
-        assert!(cfg.validate().is_ok());
-
-        // Duplicate usernames rejected.
-        cfg.v3_users = vec![valid_user.clone(), valid_user.clone()];
-        assert!(cfg
-            .validate()
-            .unwrap_err()
-            .to_string()
-            .contains("duplicate"));
-
-        // Per-user rules.
-        let mut bad = valid_user.clone();
-        bad.auth_protocol = "md5".into();
-        assert!(bad
-            .validate()
-            .unwrap_err()
-            .to_string()
-            .contains("auth_protocol"));
-        let mut bad = valid_user.clone();
-        bad.auth_password = "short".into();
-        assert!(bad
-            .validate()
-            .unwrap_err()
-            .to_string()
-            .contains("8 characters"));
-        let mut bad = valid_user.clone();
-        bad.priv_protocol = "des".into();
-        assert!(bad.validate().unwrap_err().to_string().contains("DES"));
-        let mut bad = valid_user.clone();
-        bad.priv_protocol = "aes128".into();
-        bad.priv_password = "short".into();
-        assert!(bad.validate().is_err());
-        let mut bad = valid_user;
-        bad.priv_password = "orphan-priv-pass".into();
-        assert!(bad
-            .validate()
-            .unwrap_err()
-            .to_string()
-            .contains("without priv_protocol"));
     }
 
     #[test]

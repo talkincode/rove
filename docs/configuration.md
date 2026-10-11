@@ -1,7 +1,7 @@
 # 配置详解
 
 Rove 用一个扁平的 TOML 文件配置。对比 GOST 一大堆 services / chains / hops / connectors，这里一个节点
-只回答三件事：**我是谁、控制面在哪、监听哪些口**。访问日志默认开启；SNMP、MQTT、反向 hop 等能力默认关闭。
+只回答三件事：**我是谁、控制面在哪、监听哪些口**。访问日志默认开启；MQTT、反向 hop 等能力默认关闭。
 
 完整可复制的样例见仓库根目录的
 [`config.example.toml`](https://github.com/talkincode/rove/blob/main/config.example.toml)。
@@ -15,7 +15,7 @@ Rove 用一个扁平的 TOML 文件配置。对比 GOST 一大堆 services / cha
 node_id = "edge-tokyo-01"
 ```
 
-节点的唯一标识。它会出现在访问日志、SNMP、MQTT 消息里，也用于从快照的 `node_overrides` 里挑出属于本节点的
+节点的唯一标识。它会出现在访问日志、MQTT 消息里，也用于从快照的 `node_overrides` 里挑出属于本节点的
 分组覆盖（见 [控制面同步协议](./snapshot-protocol.md)）。同一 fleet 内务必唯一、稳定。
 
 ---
@@ -258,31 +258,6 @@ enable = false
 消息契约见 [MQTT 运维通道](./mqtt-integration.md)。
 建议把 broker 凭据放在独立的 `username` / `password` 字段；即使兼容 URL userinfo，启动日志也只记录 broker 的 scheme、host 与 port。
 
----
-
-## `[snmp]` 只读 SNMP agent（默认关闭）
-
-供 Cacti / LibreNMS 等标准 NMS 直接轮询每 listener、每出口的流量计数。
-
-```toml
-[snmp]
-enable = false
-listen = "0.0.0.0:161"
-community = ""                              # v2c community；留空则 v2c 关闭
-allow_cidrs = ["127.0.0.1/32", "::1/128"]  # 来源白名单，白名单外直接丢弃
-state_path = "./data/snmp-state.json"      # v3 engineBoots 持久化
-
-# SNMPv3 USM 用户（可多个）
-# [[snmp.v3_users]]
-# username = "cacti"
-# auth_protocol = "sha256"      # sha1 | sha256
-# auth_password = "change-me-auth"
-# priv_protocol = "aes128"      # 留空表示不加密
-# priv_password = "change-me-priv"
-```
-
-只实现 GET / GETNEXT / GETBULK，**SET / TRAP / INFORM、MD5 / DES 永不支持**。MIB 表与 Cacti 接入见
-[SNMP 监控](./snmp-cacti.md)。
 
 ---
 
@@ -484,5 +459,5 @@ Rove 不读取 manifest、不自动下载工件。生产应在独立发布流程
 
 - **必填**：`node_id`、`[control_plane]`，以及至少一个 `[[listeners]]` 或 `[[tuic_listeners]]`（**例外**：启用 `[subnetra]` 的 hub 走 overlay 入口时可不配置 TCP/TUIC listener）。
 - **建议保留默认开启**：`[access_log]`。
-- **按需开启**：`[mqtt]`、`[snmp]`、`[reverse_hop]`、`[subnetra]`、`[dns]`、`[addrbook]`。
+- **按需开启**：`[mqtt]`、`[reverse_hop]`、`[subnetra]`、`[dns]`、`[addrbook]`。
 - 证书、令牌、缓存等敏感/本地文件不要提交进仓库；示例里一律用占位符。
